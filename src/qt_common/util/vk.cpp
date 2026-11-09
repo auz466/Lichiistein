@@ -68,7 +68,8 @@ void PopulateRecords(std::vector<Record>& records, QWindow* window) try {
             Vulkan::Device::CheckBrokenCompute(driverID, properties.properties.driverVersion)};
 
         const bool fsr4_capable = VideoCommon::IsFsr4CapableGpu(
-            properties.properties.vendorID, driverID == VK_DRIVER_ID_AMD_PROPRIETARY, name);
+            properties.properties.vendorID,
+            driverID == VK_DRIVER_ID_AMD_PROPRIETARY || driverID == VK_DRIVER_ID_MESA_RADV, name);
 
         std::string driver_string = Vulkan::vk::GetDriverName(driver_properties);
 

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// AMD FSR 4 through AMD's FidelityFX runtime (vulkan_common/ffx_runtime.h), which the user
-// downloads from AMD in the Graphics settings. Same inputs as the Ocarina FSR 3.1 path, which takes
-// over when FSR 4 is off, missing or fails.
+// AMD FSR 4 through an FFX API runtime (vulkan_common/ffx_runtime.h): on Windows AMD's, which the
+// user downloads from AMD in the Graphics settings; on Linux the fsr4-vk library shipped with the
+// build. Same inputs as the Ocarina FSR 3.1 path, which takes over when FSR 4 is off, missing or
+// fails.
 
 #pragma once
 
@@ -52,11 +53,11 @@ public:
         std::array<f32, 2> jitter{}; ///< Offset the scene was drawn with, in render pixels.
     };
 
-    /// Whether FSR 4 is turned on and the device runs on AMD's driver.
+    /// Whether FSR 4 is turned on and the device's driver can run it.
     [[nodiscard]] static bool IsWanted(const Device& device);
 
-    /// Throws vk::Exception when FSR 4 can't start on this device: AMD's files are missing or
-    /// don't check out, or AMD's runtime offers no FSR 4 for the GPU.
+    /// Throws vk::Exception when FSR 4 can't start on this device: the runtime is missing or
+    /// doesn't check out, or it offers no FSR 4 for the GPU.
     explicit Fsr4Upscaler(const Device& device, Scheduler& scheduler,
                           MemoryAllocator& memory_allocator);
     ~Fsr4Upscaler();
