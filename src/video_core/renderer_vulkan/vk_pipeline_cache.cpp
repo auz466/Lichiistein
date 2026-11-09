@@ -1987,7 +1987,7 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
         }
         const size_t done = start_index + state.built + state.failed + state.skipped;
         if (done % 64 == 0 || done == total) {
-            callback(VideoCore::LoadCallbackStage::Build, done, total);
+            callback(VideoCore::LoadCallbackStage::Recipe, done, total);
         }
     };
     const auto finish = [&](size_t index, bool ok) {
@@ -2016,9 +2016,16 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     };
     LOG_INFO(Render_Vulkan, "Preparing {} precompiled pipelines from {}, from record {}", total,
              Common::FS::PathToUTF8String(path), start_index);
-    callback(VideoCore::LoadCallbackStage::Build, start_index, total);
+    // Drops a press left over from a launch that finished preparing first.
+    VideoCommon::ShaderWarm::TakeSkipRecipe();
+    callback(VideoCore::LoadCallbackStage::Recipe, start_index, total);
+    bool skipped_by_user = false;
     for (size_t index = start_index; index < total; ++index) {
         if (stop_loading.stop_requested()) {
+            break;
+        }
+        if (VideoCommon::ShaderWarm::TakeSkipRecipe()) {
+            skipped_by_user = true;
             break;
         }
         auto& record = records[index];
@@ -2099,8 +2106,9 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     workers.WaitForRequests(stop_loading);
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
-    LOG_INFO(Render_Vulkan, "Precompiled pipelines: {} prepared, {} failed, {} skipped, in {:.1f} s",
-             state.built, state.failed, state.skipped, seconds);
+    LOG_INFO(Render_Vulkan,
+             "Precompiled pipelines: {} prepared, {} failed, {} skipped, in {:.1f} s{}", state.built, state.failed, state.skipped, seconds,
+             skipped_by_user ? " (preparation skipped from the loading screen)" : "");
     if (stop_loading.stop_requested()) {
         kept.file.close();
         std::filesystem::remove(kept_temporary, error);
@@ -2142,9 +2150,15 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
                  kept_records.size(), kept.infos_by_hash.size(), kept.spirv_by_hash.size(),
                  kept.spirv_bytes >> 20, kept.offset >> 20);
     }
-    std::ofstream stamp_file(stamp_path, std::ios::binary | std::ios::trunc);
-    stamp_file << stamp;
-    stamp_file.close();
+    // What was kept serves this session. Without the stamp a later launch prepares again, from
+    // the start so that it keeps every pipeline's infos; the driver still has what it compiled.
+    if (skipped_by_user) {
+        std::filesystem::remove(stamp_path, error);
+    } else {
+        std::ofstream stamp_file(stamp_path, std::ios::binary | std::ios::trunc);
+        stamp_file << stamp;
+        stamp_file.close();
+    }
     std::filesystem::remove(progress_path, error);
     LoadPrecompiledInfos(path, infos_path, stamp);
 }
