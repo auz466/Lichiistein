@@ -66,9 +66,47 @@ jobs:
               -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA"
           fi
 
+  # The FSR 4 library Linux x86_64 packages ship (externals/fsr4-vk). Built on the oldest system the
+  # AppImage supports, once per run; nothing in it depends on the emulator, so it is cached.
+  fsr4-vk:
+    name: FSR 4 library
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Restore the library
+        id: fsr4-cache
+        uses: actions/cache@v5
+        with:
+          path: fsr4-vk-out
+          key: fsr4-vk-ubuntu-24.04-${{ hashFiles('tools/fsr4/build-fsr4-vk.sh', 'externals/fsr4-vk/NOTICE.md') }}
+
+      - name: Install build tools
+        if: steps.fsr4-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake curl g++ git llvm make python3 python3-zstandard unzip
+
+      - name: Build the library
+        if: steps.fsr4-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: tools/fsr4/build-fsr4-vk.sh fsr4-vk-out
+
+      - name: Upload the library
+        uses: actions/upload-artifact@v7
+        with:
+          name: fsr4-vk-${{ github.sha }}
+          path: fsr4-vk-out/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
   build:
     name: ${{ matrix.platform }} binary
-    needs: prepare-release
+    needs: [prepare-release, fsr4-vk]
     runs-on: ${{ matrix.runner }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -108,6 +146,13 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+
+      - name: Download the FSR 4 library
+        if: startsWith(matrix.platform, 'linux-x86_64')
+        uses: actions/download-artifact@v7
+        with:
+          name: fsr4-vk-${{ github.sha }}
+          path: fsr4-vk-out
 
       - name: Install Linux dependencies
         if: startsWith(matrix.platform, 'linux')
@@ -395,8 +440,14 @@ jobs:
           test -x build/release/bin/eden-cli
           test -f build/release/bin/libnxformat.so
           strip build/release/bin/lichii build/release/bin/eden-cli
+          files=(lichii eden-cli nx2_switches.txt libnxformat.so)
+          if [ -d fsr4-vk-out ]; then
+            chmod 755 fsr4-vk-out/amd_fidelityfx_upscaler_vk.so
+            cp -r fsr4-vk-out/amd_fidelityfx_upscaler_vk.so fsr4-vk-out/fsr4-vk-licenses build/release/bin/
+            files+=(amd_fidelityfx_upscaler_vk.so fsr4-vk-licenses)
+          fi
           tar -czf "lichii-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz" \
-            -C build/release/bin lichii eden-cli nx2_switches.txt libnxformat.so
+            -C build/release/bin "${files[@]}"
           ls -la "lichii-${GITHUB_SHA}-${{ matrix.platform }}.tar.gz"
 
       # A self-contained AppImage: linuxdeploy bundles every library the two programs need except
@@ -432,6 +483,11 @@ jobs:
           export ARCH="$arch"
           mkdir -p AppDir/usr/bin
           cp build/release/bin/nx2_switches.txt AppDir/usr/bin/
+          if [ -d fsr4-vk-out ]; then
+            install -m 755 fsr4-vk-out/amd_fidelityfx_upscaler_vk.so AppDir/usr/bin/
+            mkdir -p AppDir/usr/share/licenses
+            cp -r fsr4-vk-out/fsr4-vk-licenses AppDir/usr/share/licenses/fsr4-vk
+          fi
           "$tools/linuxdeploy-$arch.AppImage" --appdir AppDir \
             --executable build/release/bin/lichii \
             --executable build/release/bin/eden-cli \
@@ -626,6 +682,12 @@ jobs:
           pattern: lichii-*-${{ github.sha }}
           path: artifacts
 
+      - name: Download the FSR 4 library's source
+        uses: actions/download-artifact@v7
+        with:
+          name: fsr4-vk-${{ github.sha }}
+          path: fsr4-vk-out
+
       - name: Package release files
         shell: bash
         run: |
@@ -649,6 +711,8 @@ jobs:
               (cd "$artifact" && zip -qr "${GITHUB_WORKSPACE}/dist/$(strip_sha "$name").zip" .)
             fi
           done
+          # GPL-3.0's corresponding source for the fsr4-vk library in the Linux x86_64 packages.
+          cp fsr4-vk-out/fsr4-vk-*-source.tar.gz dist/
           ls -la dist
 
       - name: Create release
@@ -718,13 +782,22 @@ jobs:
           $(row "arm64 (Apple Silicon)" "$(link zip lichii-macos-arm64.zip)" "" "macOS 15 or newer. Not notarized: right-click and choose Open the first time, or run \`xattr -dr com.apple.quarantine lichii.app\`. \`eden-cli\` is inside the app, in \`Contents/MacOS\`" | table)
 
           ${pgo_note}
+
+          ## FSR 4
+
+          Turn on **Use AMD FSR 4 in place of FSR 3.1** in the Graphics settings (Ocarina of Time, with its FSR setting on).
+
+          - Linux x86_64 packages include \`amd_fidelityfx_upscaler_vk.so\`, built from [fsr4-vk](https://github.com/Astyyyyy/fsr4-vk) (GPL-3.0-only, source archive attached) and AMD's MIT-licensed FSR 4.1.1 shaders and weights. It is an unofficial build, not made or endorsed by AMD. See \`fsr4-vk-licenses\` in the tar.gz or \`usr/share/licenses/fsr4-vk\` in the AppImage.
+          - On Windows the setting's panel downloads AMD's own signed FidelityFX runtime from AMD, after showing AMD's licence. Nothing of AMD's is in the zip.
+
+          AMD, FidelityFX and FSR are trademarks of Advanced Micro Devices, Inc.
           EOF
 
           gh release create "${tag}" dist/* \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --prerelease \
-            --title "Lichii ${GITHUB_REF_NAME} build ${GITHUB_RUN_NUMBER} (${GITHUB_SHA::7})" \
+            --title "Lichiistein ${GITHUB_REF_NAME} build ${GITHUB_RUN_NUMBER} (${GITHUB_SHA::7})" \
             --notes-file notes.md
 
       # LICHII_BUILD_TAG is baked into every binary as build-<run number>, and the update checker
