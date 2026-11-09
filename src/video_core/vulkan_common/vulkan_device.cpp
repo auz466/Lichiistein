@@ -28,6 +28,7 @@
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "video_core/nx2_stutter_trace.h"
+#include "video_core/vulkan_common/ffx_runtime.h"
 #include "video_core/vulkan_common/nsight_aftermath_tracker.h"
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -480,27 +481,6 @@ void Device::RemoveExtensionFeature(bool& extension, Feature& feature,
     feature.pNext = pNext;
 }
 
-namespace {
-/// An FFX API FSR 4 library (Linux, RADV) runs its RDNA 4 network in FP8, which needs float8 on
-/// the device; the emulator's own shaders don't use it, so it stays off without a library.
-bool WantsLinuxFsr4(VkDriverId driver_id) {
-#ifdef __linux__
-    if (driver_id != VK_DRIVER_ID_MESA_RADV) {
-        return false;
-    }
-    if (const char* const env = std::getenv("EDEN_NX2_FSR4_LIB"); env && env[0] != '\0') {
-        return true;
-    }
-    std::error_code ec;
-    return std::filesystem::is_regular_file(
-        Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / "amd_fidelityfx_upscaler_vk.so",
-        ec);
-#else
-    return false;
-#endif
-}
-} // Anonymous namespace
-
 template <typename Feature>
 void Device::RemoveExtensionFeatureIfUnsuitable(bool is_suitable, Feature& feature,
                                                 const std::string& extension_name) {
@@ -511,14 +491,10 @@ void Device::RemoveExtensionFeatureIfUnsuitable(bool is_suitable, Feature& featu
 }
 
 namespace {
-/// AMD FSR 4 runs AMD's own shaders inside AMD's runtime (Windows, AMD's driver). They need
-/// float16 and, on RDNA 4, float8 on the device; the emulator's shaders use neither for it.
-bool WantsAmdFsr4(VkDriverId driver_id) {
-#ifdef _WIN32
-    return driver_id == VK_DRIVER_ID_AMD_PROPRIETARY && Settings::values.amd_fsr4.GetValue();
-#else
-    return false;
-#endif
+/// FSR 4's own shaders need float16 and, on RDNA 4, float8 on the device; the emulator's shaders
+/// use neither for it, so both stay off unless FSR 4 will run.
+bool WantsFsr4(VkDriverId driver_id) {
+    return FfxRuntime::IsWanted(driver_id);
 }
 } // Anonymous namespace
 
@@ -833,7 +809,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     // host-only shaders (frame generation) may use it. The AMD and Intel workarounds turn it off
     // for every shader, host ones included.
     host_float16_supported |= float16_math;
-    if (host_float16_supported || (device_float16 && WantsAmdFsr4(driver_id))) {
+    if (host_float16_supported || (device_float16 && WantsFsr4(driver_id))) {
         features.shader_float16_int8.shaderFloat16 = VK_TRUE;
     }
     logical = vk::Device::Create(physical, queue_cis, ExtensionListForVulkan(loaded_extensions), first_next, dld);
@@ -1595,9 +1571,10 @@ bool Device::GetSuitability(bool requires_swapchain) {
 }
 
 void Device::RemoveUnsuitableExtensions() {
-    // VK_EXT_shader_float8, only for an FSR 4 library (see WantsLinuxFsr4)
+    // VK_EXT_shader_float8, only for FSR 4: its RDNA 4 network runs in FP8 and drew a black picture
+    // without the feature on the device (found by CheezerWheezer).
     if (extensions.shader_float8 &&
-        (!features.shader_float8.shaderFloat8 || !WantsLinuxFsr4(properties.driver.driverID))) {
+        (!features.shader_float8.shaderFloat8 || !WantsFsr4(properties.driver.driverID))) {
         RemoveExtensionFeature(extensions.shader_float8, features.shader_float8,
                                VK_EXT_SHADER_FLOAT8_EXTENSION_NAME);
     }
@@ -1941,14 +1918,6 @@ void Device::RemoveUnsuitableExtensions() {
         !properties.pipeline_binary.pipelineBinaryPrefersInternalCache && !DriverCachesPipelines();
     RemoveExtensionFeatureIfUnsuitable(extensions.pipeline_binary, features.pipeline_binary,
                                        VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
-
-    // VK_EXT_shader_float8, only for AMD FSR 4: its RDNA 4 network runs in FP8 and drew a black
-    // picture without the feature on the device (found by CheezerWheezer).
-    if (extensions.shader_float8 &&
-        (!features.shader_float8.shaderFloat8 || !WantsAmdFsr4(properties.driver.driverID))) {
-        RemoveExtensionFeature(extensions.shader_float8, features.shader_float8,
-                               VK_EXT_SHADER_FLOAT8_EXTENSION_NAME);
-    }
 
     // VK_KHR_maintenance6
     extensions.maintenance6 = features.maintenance6.maintenance6;

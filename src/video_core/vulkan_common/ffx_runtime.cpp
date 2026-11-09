@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <cstdlib>
 #include <mutex>
 #include <system_error>
 
+#include "common/dynamic_library.h"
 #include "common/fs/path_util.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "video_core/vulkan_common/ffx_runtime.h"
 
 #ifdef _WIN32
@@ -193,6 +196,10 @@ std::shared_ptr<const Api> Acquire() {
     return shared;
 }
 
+bool IsWanted(VkDriverId driver_id) {
+    return driver_id == VK_DRIVER_ID_AMD_PROPRIETARY && Settings::values.amd_fsr4.GetValue();
+}
+
 #else
 
 bool IsSignedByAmd(const std::filesystem::path&) {
@@ -203,9 +210,88 @@ bool HasSha256(const std::filesystem::path&, std::string_view) {
     return false;
 }
 
+#ifdef __linux__
+
+namespace {
+
+constexpr const char* LIBRARY_NAME = "amd_fidelityfx_upscaler_vk.so";
+
+const char* LibraryOverride() {
+    const char* const env = std::getenv("EDEN_NX2_FSR4_LIB");
+    return env && env[0] != '\0' ? env : nullptr;
+}
+
+/// EDEN_NX2_FSR4_LIB, else a library in the user folder, else the one shipped next to the program
+/// (which is inside the mounted image for an AppImage). Empty when there is none.
+std::filesystem::path LibraryPath() {
+    if (const char* const env = LibraryOverride()) {
+        return env;
+    }
+    std::error_code ec;
+    std::filesystem::path file =
+        Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / LIBRARY_NAME;
+    if (std::filesystem::is_regular_file(file, ec)) {
+        return file;
+    }
+    const std::filesystem::path program = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec) {
+        file = program.parent_path() / LIBRARY_NAME;
+        if (std::filesystem::is_regular_file(file, ec)) {
+            return file;
+        }
+    }
+    return {};
+}
+
+} // Anonymous namespace
+
+bool IsWanted(VkDriverId driver_id) {
+    return driver_id == VK_DRIVER_ID_MESA_RADV &&
+           (Settings::values.amd_fsr4.GetValue() || LibraryOverride()) && !LibraryPath().empty();
+}
+
+std::shared_ptr<const Api> Acquire() {
+    struct Loaded : Api {
+        Common::DynamicLibrary library;
+    };
+    static std::mutex mutex;
+    static std::shared_ptr<const Loaded> loaded;
+
+    std::scoped_lock lock{mutex};
+    if (loaded) {
+        return loaded;
+    }
+    const std::string path = Common::FS::PathToUTF8String(LibraryPath());
+    if (path.empty()) {
+        LOG_INFO(Render_Vulkan, "FSR 4: no {} found; using FSR 3.1", LIBRARY_NAME);
+        return nullptr;
+    }
+    auto library = std::make_shared<Loaded>();
+    library->library = Common::DynamicLibrary(path.c_str());
+    if (!library->library.IsOpen() ||
+        !library->library.GetSymbol("ffxCreateContext", &library->create_context) ||
+        !library->library.GetSymbol("ffxDestroyContext", &library->destroy_context) ||
+        !library->library.GetSymbol("ffxQuery", &library->query) ||
+        !library->library.GetSymbol("ffxDispatch", &library->dispatch)) {
+        LOG_WARNING(Render_Vulkan, "FSR 4: {} doesn't load; using FSR 3.1", path);
+        return nullptr;
+    }
+    LOG_INFO(Render_Vulkan, "FSR 4: upscaler library {}", path);
+    loaded = std::move(library);
+    return loaded;
+}
+
+#else
+
+bool IsWanted(VkDriverId) {
+    return false;
+}
+
 std::shared_ptr<const Api> Acquire() {
     return nullptr;
 }
+
+#endif
 
 #endif
 

@@ -85,10 +85,15 @@ the game keeps its own pass whenever DLSS is off, unavailable or fails to start.
   Samplers pick the biased or unbiased variant at each bind, so a console mode switch takes
   effect in-session. Images the GPU wrote (render targets: bloom, blur, reflections, fog) keep
   the game's own bias.
-- FSR 4 (Windows, AMD's driver, off by default): with "Use AMD FSR 4 in place of FSR 3.1" on,
+- FSR 4 on Linux (RADV, off by default): with "Use AMD FSR 4 in place of FSR 3.1" on, the same
+  inputs go to the fsr4-vk library (FSR 4.1.1, unofficial, not endorsed by AMD), found through
+  `EDEN_NX2_FSR4_LIB`, the user folder, or next to the program, where Linux x86_64 releases ship
+  it. See `externals/fsr4-vk/README.md` for how it is built and its licences. Setting
+  `EDEN_NX2_FSR4_LIB` turns FSR 4 on without the setting.
+- FSR 4 on Windows (AMD's driver, off by default): with "Use AMD FSR 4 in place of FSR 3.1" on,
   the same inputs, jitter and RCAS setting go to AMD's FSR 4 through AMD's FidelityFX runtime
-  (FidelityFX SDK 2.4.0, FSR Upscaling 4.1.2). Nothing of AMD's ships with Lichii: the setting's
-  panel downloads `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` from
+  (FidelityFX SDK 2.4.0, FSR Upscaling 4.1.2). Nothing of AMD's ships with the Windows build: the
+  setting's panel downloads `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` from
   the SDK's GitHub repository at the release commit into the user folder's `fidelityfx` folder,
   after showing AMD's licence. Each file must match its pinned size and SHA-256
   (`vulkan_common/ffx_files.h`) and carry AMD's Authenticode signature, checked after the
