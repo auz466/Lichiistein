@@ -2224,7 +2224,7 @@ void RasterizerVulkan::DispatchCompute() {
         buffer_cache.NoteWorkRecorded(true);
         SubmitNx2ListCopies();
 #ifdef EGLANTINE_STREAMLINE
-        TryOcarinaDlss(*pipeline, false); // As after a direct dispatch
+        TryOcarinaUpscale(*pipeline, false); // As after a direct dispatch
 #endif
         return;
     }
