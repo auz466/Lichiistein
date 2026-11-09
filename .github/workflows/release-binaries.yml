@@ -88,7 +88,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake curl g++ git llvm make python3 python3-zstandard unzip
+            cmake curl g++ git libvulkan-dev llvm make python3 python3-zstandard unzip
 
       - name: Build the library
         if: steps.fsr4-cache.outputs.cache-hit != 'true'
