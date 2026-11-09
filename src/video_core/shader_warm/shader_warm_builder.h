@@ -109,6 +109,11 @@ bool TakeWarmBeforeStart();
 void RequestSkipWarm();
 bool TakeSkipWarm();
 
+/// Skip button of the recipe preparation: it stops after its current builds and the game starts,
+/// and a later launch prepares from the start. Taken (and cleared) by the renderer.
+void RequestSkipRecipe();
+bool TakeSkipRecipe();
+
 /// Removes the title's precache file, its marker and count, the list of precached graphics
 /// pipelines older builds kept and a leftover temporary file (rebuild or delete from the UI). Returns false when a file exists but cannot be removed, with
 /// the reason in `error` when given.
