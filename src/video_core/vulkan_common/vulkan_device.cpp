@@ -459,6 +459,27 @@ void Device::RemoveExtensionFeature(bool& extension, Feature& feature,
     feature.pNext = pNext;
 }
 
+namespace {
+/// An FFX API FSR 4 library (Linux, RADV) runs its RDNA 4 network in FP8, which needs float8 on
+/// the device; the emulator's own shaders don't use it, so it stays off without a library.
+bool WantsLinuxFsr4(VkDriverId driver_id) {
+#ifdef __linux__
+    if (driver_id != VK_DRIVER_ID_MESA_RADV) {
+        return false;
+    }
+    if (const char* const env = std::getenv("EDEN_NX2_FSR4_LIB"); env && env[0] != '\0') {
+        return true;
+    }
+    std::error_code ec;
+    return std::filesystem::is_regular_file(
+        Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / "amd_fidelityfx_upscaler_vk.so",
+        ec);
+#else
+    return false;
+#endif
+}
+} // Anonymous namespace
+
 template <typename Feature>
 void Device::RemoveExtensionFeatureIfUnsuitable(bool is_suitable, Feature& feature,
                                                 const std::string& extension_name) {
@@ -1540,6 +1561,13 @@ bool Device::GetSuitability(bool requires_swapchain) {
 }
 
 void Device::RemoveUnsuitableExtensions() {
+    // VK_EXT_shader_float8, only for an FSR 4 library (see WantsLinuxFsr4)
+    if (extensions.shader_float8 &&
+        (!features.shader_float8.shaderFloat8 || !WantsLinuxFsr4(properties.driver.driverID))) {
+        RemoveExtensionFeature(extensions.shader_float8, features.shader_float8,
+                               VK_EXT_SHADER_FLOAT8_EXTENSION_NAME);
+    }
+
     // VK_EXT_color_write_enable
     extensions.color_write_enable = features.color_write_enable.colorWriteEnable;
     RemoveExtensionFeatureIfUnsuitable(extensions.color_write_enable, features.color_write_enable,
