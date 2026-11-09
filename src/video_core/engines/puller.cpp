@@ -333,6 +333,62 @@ void ReportLongWait(DmaPusher& dma_pusher, Puller::PendingAcquire& acquire,
         dma_pusher.memory_manager.Read<u32>(words + 12));
 }
 
+// Ocarina of Time's flip counters: the words of device block 0xd6d2000-0xd6d204c advance only
+// through fence-carried payload releases, as a ring 19 deep. Two ways an AcquireEqual on them
+// never returns (every GPU channel then waits and the game hangs; approach from Eglantine #712):
+// the word already went past the value (the channels aren't ordered against the writers as on
+// hardware), or the channels that carry the next round's releases wait behind such an acquire.
+// Returns whether this acquire was let through. EDEN_NX2_OOT_SEM_RESCUE=0 turns this off.
+// `current`: the word as read after a drain, or nothing to read it from memory.
+bool RescueOcarinaFlipCounter(DmaPusher& dma_pusher, const Puller::PendingAcquire& acquire,
+                              u64 device, std::optional<u32> current) {
+    constexpr u64 OcarinaProgramId = 0x0400486024DEC000ULL;
+    constexpr u64 BlockBegin = 0xd6d2000;
+    constexpr u64 BlockEnd = 0xd6d204c;
+    constexpr u32 MaxAhead = 0x40;
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_NX2_OOT_SEM_RESCUE");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (!enabled || acquire.operation != Nx2SemaphoreWaiters::AcquireEqual || device < BlockBegin ||
+        device >= BlockEnd || Settings::GetCurrentProgramID() != OcarinaProgramId) {
+        return false;
+    }
+    const auto waited = std::chrono::steady_clock::now() - acquire.since;
+    if (waited < std::chrono::milliseconds{10}) {
+        return false;
+    }
+    const u32 word = current.value_or(dma_pusher.memory_manager.Read<u32>(acquire.address));
+    // The first 16 of each kind, then every 256th.
+    const auto should_log = [](std::atomic<u32>& counter) {
+        const u32 count = counter.fetch_add(1, std::memory_order_relaxed);
+        return count < 16 || count % 256 == 0;
+    };
+    if (static_cast<s32>(word - acquire.value) > 0) {
+        if (static std::atomic<u32> passed{}; should_log(passed)) {
+            LOG_INFO(HW_GPU, "Channel {} flip counter {:#x}: wanted {:#x}, passed at {:#x} ({} times)",
+                     dma_pusher.channel_state.bind_id, device, acquire.value, word,
+                     passed.load(std::memory_order_relaxed));
+        }
+        return true;
+    }
+    // Only once the back ran all the work sent before the acquire: a slow back (a shader build)
+    // still has the release to run. 100 ms is above normal frame pacing.
+    const u32 ahead = acquire.value - word;
+    if (waited < std::chrono::milliseconds{100} || ahead == 0 || ahead > MaxAhead ||
+        !VideoCommon::GpuSplit::Get().Ran(acquire.sent_at)) {
+        return false;
+    }
+    dma_pusher.memory_manager.Write<u32>(acquire.address, acquire.value);
+    Nx2SemaphoreWaiters::Get().OnWrite(device, acquire.value);
+    if (static std::atomic<u32> completed{}; should_log(completed)) {
+        LOG_WARNING(HW_GPU, "Channel {} flip counter {:#x}: completed round {:#x} -> {:#x} ({} times)",
+                    dma_pusher.channel_state.bind_id, device, word, acquire.value,
+                    completed.load(std::memory_order_relaxed));
+    }
+    return true;
+}
+
 } // Anonymous namespace
 
 bool Puller::PendingAcquire::Matches(u32 current) const {
@@ -403,6 +459,10 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
             return true;
         }
     }
+    if (const auto device = dma_pusher.memory_manager.GpuToCpuAddress(pending_acquire->address);
+        device && RescueOcarinaFlipCounter(dma_pusher, *pending_acquire, *device, current)) {
+        return true;
+    }
     ReportLongWait(dma_pusher, *pending_acquire, current);
     return false;
 }
@@ -460,6 +520,9 @@ bool Puller::PollWithoutDrain(DmaPusher& dma_pusher, u64 device) {
             NoteResumed(this, acquire, Resume::Drain);
             return true;
         }
+    }
+    if (RescueOcarinaFlipCounter(dma_pusher, acquire, device, std::nullopt)) {
+        return true;
     }
     MaybeReleaseFences(dma_pusher, acquire);
     ReportLongWait(dma_pusher, acquire, std::nullopt);
