@@ -359,6 +359,13 @@ public:
     /// front can't tell).
     void NoteSemaphoreWrite(u64 device_address, u32 payload, bool known, bool at_least = false,
                             Landing landing = Landing::AtRun);
+    /// Whether a fence-flagged payload release skips waiting for its fence and writes at once:
+    /// below High GPU accuracy with Default fences (QueryCacheBase::CounterReport).
+    [[nodiscard]] static bool FencedPayloadIsSynced();
+    /// When a fence-flagged payload release reaches memory.
+    [[nodiscard]] static Landing FencedPayloadLanding() {
+        return FencedPayloadIsSynced() ? Landing::AtRun : Landing::Fenced;
+    }
     struct QueuedSemaphoreWrite {
         u32 payload;
         bool known;
