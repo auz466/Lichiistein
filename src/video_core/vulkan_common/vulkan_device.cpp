@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <string_view>
 #include <thread>
 #include "common/container/unordered_map.h"
 #include "common/container/unordered_set.h"
@@ -497,6 +499,29 @@ bool WantsFsr4(VkDriverId driver_id) {
     return FfxRuntime::IsWanted(driver_id);
 }
 } // Anonymous namespace
+
+bool Device::MesaShaderCacheEnabled() noexcept {
+    static const bool enabled = [] {
+        // Matches Mesa's boolean parsing of its environment options.
+        const auto set = [](const char* name) {
+            const char* value = std::getenv(name);
+            if (value == nullptr) {
+                return false;
+            }
+            const std::string_view v{value};
+            for (const std::string_view truthy : {"1", "true", "t", "yes", "y"}) {
+                if (std::ranges::equal(v, truthy, [](char a, char b) {
+                        return std::tolower(static_cast<unsigned char>(a)) == b;
+                    })) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        return !set("MESA_SHADER_CACHE_DISABLE") && !set("MESA_GLSL_CACHE_DISABLE");
+    }();
+    return enabled;
+}
 
 Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR surface,
                const vk::InstanceDispatch& dld_)
