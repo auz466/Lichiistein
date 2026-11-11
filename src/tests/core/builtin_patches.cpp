@@ -45,7 +45,7 @@ constexpr size_t DynamicRoutineOffset = sizeof(Loader::NSOHeader) + 0x3C46200;
 constexpr size_t DynamicStateOffset = sizeof(Loader::NSOHeader) + 0x4E9FE00;
 constexpr size_t DynamicRoutineSize = 120;
 constexpr size_t UnlockRoutineSize = 128;
-constexpr size_t DynamicStateSize = 0x98;
+constexpr size_t DynamicStateSize = 0xA8;
 constexpr size_t WaterHookOffset = sizeof(Loader::NSOHeader) + 0x475F8;
 constexpr size_t WaterMulOffset = sizeof(Loader::NSOHeader) + 0x4760C;
 constexpr size_t WaterRoutineOffset = sizeof(Loader::NSOHeader) + 0x3C46300;
@@ -59,6 +59,20 @@ constexpr std::string_view WaterRoutine =
     "8C0500118C0900124C0100B9610940BD0028211E01102C1E0228211E4800381E1F050071"
     "4A000054280080520101221E0038211E01103C1E0048211E600900BDC0035FD6E8031F2A"
     "C0035FD6";
+constexpr size_t SoundEntryOffset = sizeof(Loader::NSOHeader) + 0x415300;
+constexpr size_t SoundStepOffset = sizeof(Loader::NSOHeader) + 0x415334;
+constexpr size_t SoundGateOffset = sizeof(Loader::NSOHeader) + 0x3C46800;
+constexpr size_t SoundFeedOffset = sizeof(Loader::NSOHeader) + 0x3C46280;
+constexpr u32 SoundEntryOriginalInstruction = 0xD503237F; // pacibsp
+constexpr u32 SoundEntryBranchInstruction = 0x14E0C540;   // b main+0x3C46800
+constexpr u32 SoundStepOriginalInstruction = 0xBD401100;  // ldr s0, [x8, #0x10]
+constexpr u32 SoundStepCallInstruction = 0x94E0C3D3;      // bl main+0x3C46280
+constexpr std::string_view SoundGate =
+    "D09200B010823A9102030035C9810090294944F9290140F9301140BD11102E1E0022311EAA010054"
+    "120240BD522A301E4022311ECB000054523A311E120200BD29008052090600B90A000014120200BD"
+    "1F0600B9C0035FD61F0200B929008052090600B903000014090640B9690000347F2303D5A43A1F17"
+    "C0035FD6";
+constexpr std::string_view SoundFeed = "001140BD10102E1E0068301EC0035FD6";
 constexpr u32 DynamicCallInstruction = 0x94D57D4F;
 constexpr u32 DynamicOriginalInstruction = 0x1E201828;
 
@@ -259,6 +273,10 @@ std::vector<u8> MakeDynamicMain() {
                 sizeof(WaterOriginalInstruction));
     std::memcpy(nso.data() + WaterMulOffset, &WaterMulOriginalInstruction,
                 sizeof(WaterMulOriginalInstruction));
+    std::memcpy(nso.data() + SoundEntryOffset, &SoundEntryOriginalInstruction,
+                sizeof(SoundEntryOriginalInstruction));
+    std::memcpy(nso.data() + SoundStepOffset, &SoundStepOriginalInstruction,
+                sizeof(SoundStepOriginalInstruction));
     return nso;
 }
 
@@ -292,6 +310,20 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
                WordAt(nso, WaterMulOffset) == WaterMulOriginalInstruction &&
                WordAt(nso, WaterRoutineOffset) == 0;
     };
+    const auto hex_at = [](const std::vector<u8>& nso, size_t offset, size_t size) {
+        return Common::HexToString(std::span{nso}.subspan(offset, size));
+    };
+    const auto sound_gate_patched = [&](const std::vector<u8>& nso) {
+        return WordAt(nso, SoundEntryOffset) == SoundEntryBranchInstruction &&
+               WordAt(nso, SoundStepOffset) == SoundStepCallInstruction &&
+               hex_at(nso, SoundGateOffset, SoundGate.size() / 2) == SoundGate &&
+               hex_at(nso, SoundFeedOffset, SoundFeed.size() / 2) == SoundFeed;
+    };
+    const auto sound_gate_untouched = [](const std::vector<u8>& nso) {
+        return WordAt(nso, SoundEntryOffset) == SoundEntryOriginalInstruction &&
+               WordAt(nso, SoundStepOffset) == SoundStepOriginalInstruction &&
+               WordAt(nso, SoundGateOffset) == 0 && WordAt(nso, SoundFeedOffset) == 0;
+    };
     const auto nso = MakeDynamicMain();
 
     // Default: FPS Unlock applies, Dynamic FPS is listed as replaced by it when it applies.
@@ -306,6 +338,7 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
                                        "1F2003D50AD7A33C0000C040");
     REQUIRE(WordAt(patched) == BranchInstruction);
     REQUIRE(water_patched(patched));
+    REQUIRE(sound_gate_patched(patched));
 
     // Unchecking only Dynamic FPS keeps FPS Unlock.
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{DynamicFps}};
@@ -324,6 +357,8 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
                                        "0AD7833F");
     REQUIRE(WordAt(patched, DynamicRoutineOffset + DynamicRoutineSize) == 0);
     REQUIRE(water_patched(patched));
+    // Dark's step stays at or above 1.0, so the sound manager keeps running every frame.
+    REQUIRE(sound_gate_untouched(patched));
 
     // Both unchecked: hook and code cave stay untouched.
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{FpsUnlock},
@@ -332,6 +367,7 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
     REQUIRE(WordAt(patched, DynamicCallOffset) == DynamicOriginalInstruction);
     REQUIRE(WordAt(patched, DynamicRoutineOffset) == 0);
     REQUIRE(water_untouched(patched));
+    REQUIRE(sound_gate_untouched(patched));
 
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution}};
     patched = manager.PatchNSO(nso, "main");
