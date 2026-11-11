@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Builds a Switch 2 title's precompiled pipeline file (precompiled.fork-v<N>.nx2prep) from the
-# game's own files and the Lichii disk caches recorded while playing it, and its recipe to share.
+# game's own files and the Lichii disk caches recorded while playing it. (Lichii builds the same
+# file in the emulator: the game list's "Build Precompiled Shaders from My Play...".)
 #
 # usage: run_pipeline.sh CACHE.bin [CACHE.bin...]
 #
@@ -11,7 +12,6 @@
 # Environment:
 #   NX2_GAME     the game: a .nup file (base and update), or an unpacked RomFS folder
 #   NX2_OUT      output folder (default ./nx2-precompile-out)
-#   NX2_RECIPE   the recipe to write (default $NX2_OUT/game.nx2recipe)
 #   NX2_TOOL     nx2-precompile executable (default: nx2-precompile on PATH)
 #   NX2_K        predicted render states per vertex/pixel pair (default 4)
 #   PYTHON       Python 3.11+ (default python)
@@ -24,7 +24,6 @@ TOOL=${NX2_TOOL:-nx2-precompile}
 K=${NX2_K:-4}
 VERSION=$("$TOOL" cache-version) # the file name's v<N>; the Lichii build reading it must match
 PREP=$OUT/precompiled.fork-v$VERSION.nx2prep
-RECIPE=${NX2_RECIPE:-$OUT/game.nx2recipe}
 PYTHON=${PYTHON:-python}
 PY=$(cd "$(dirname "$0")" && pwd)/py
 PROGRAMS=$OUT/game.programs
@@ -85,7 +84,4 @@ echo "== 8. replay check"
 
 echo "== 9. SPIR-V for every environment, one at a time (a compiler abort is listed, not fatal)"
 "$PYTHON" -I "$PY/emit_check.py" "$TOOL" "$PREP" "$OUT/emit_crashes.json"
-echo "== 10. recipe: the precompiled file without the game's code, to share; and its audit"
-"$TOOL" recipe --file "$PREP" --game "$NX2_GAME" --out "$RECIPE"
-"$TOOL" audit --recipe "$RECIPE" --game "$NX2_GAME"
-echo "done: copy $PREP next to the title's lichii-cache.v2.bin, or share $RECIPE"
+echo "done: copy $PREP next to the title's lichii-cache.v2.bin"

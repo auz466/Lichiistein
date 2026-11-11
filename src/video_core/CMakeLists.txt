@@ -132,8 +132,8 @@ add_library(video_core STATIC
     nx2_list_macro_trace.h
     nx2_cmdpage_diag.h
     nx2_debug_control.cpp
-    nx2_recipe.cpp
-    nx2_recipe.h
+    nx2_lowering.cpp
+    nx2_lowering.h
     nx2_debug_control.h
     nx2_fast_draw.cpp
     nx2_fast_draw.h

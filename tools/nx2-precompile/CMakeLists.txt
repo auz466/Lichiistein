@@ -6,7 +6,7 @@ add_executable(nx2-precompile main.cpp
     ${CMAKE_SOURCE_DIR}/src/video_core/nx2_precompile.cpp
     ${CMAKE_SOURCE_DIR}/src/video_core/nx2_precompile_build.cpp
     ${CMAKE_SOURCE_DIR}/src/core/file_sys/nx2_shader_extract.cpp
-    ${CMAKE_SOURCE_DIR}/src/video_core/nx2_recipe.cpp
+    ${CMAKE_SOURCE_DIR}/src/video_core/nx2_lowering.cpp
     ${CMAKE_SOURCE_DIR}/src/video_core/shader_cache_v2/cache_file.cpp
     ${CMAKE_SOURCE_DIR}/src/video_core/shader_cache_v2/cache_format.cpp
     ${CMAKE_SOURCE_DIR}/src/core/file_sys/nup_container.cpp

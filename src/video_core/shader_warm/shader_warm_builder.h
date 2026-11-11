@@ -109,7 +109,7 @@ bool TakeWarmBeforeStart();
 void RequestSkipWarm();
 bool TakeSkipWarm();
 
-/// Skip button of the recipe preparation: it stops after its current builds and the game starts,
+/// Skip button of the precompiled pipelines' preparation: it stops after its current builds and the game starts,
 /// and a later launch prepares from the start. Taken (and cleared) by the renderer.
 void RequestSkipRecipe();
 bool TakeSkipRecipe();

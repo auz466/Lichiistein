@@ -55,7 +55,7 @@
 #include "core/file_sys/nup_container.h"
 #include "core/file_sys/nx2_shader_extract.h"
 #include "core/file_sys/vfs/vfs_real.h"
-#include "video_core/nx2_recipe.h"
+#include "video_core/nx2_lowering.h"
 #include "video_core/pipeline_cache_files.h"
 #include "video_core/shader_cache_v2/cache_file.h"
 #include "video_core/nx2_precompile.h"
@@ -80,7 +80,7 @@ u64 IndirectCbufKey(u32 bank, u32 offset, u32 indirect) {
     return (u64{1} << 63) | (u64{indirect & 0x3fffff} << 40) | CbufKey(bank, offset);
 }
 
-using VideoCommon::Nx2Recipe::NativeShaderHash;
+using VideoCommon::Nx2Lowering::NativeShaderHash;
 
 std::vector<u8> ReadFile(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -228,10 +228,10 @@ struct Packages {
 // ---------------------------------------------------------------------------------------------
 // Capture + lowering, as GenericEnvironment::LowerNativeCode does it.
 
-using VideoCommon::Nx2Recipe::Lowered;
+using VideoCommon::Nx2Lowering::Lowered;
 
 std::optional<Lowered> CaptureAndLower(const PackageProgram& program, std::string& error) {
-    return VideoCommon::Nx2Recipe::Lower(program.stage, program.control, program.code, error);
+    return VideoCommon::Nx2Lowering::Lower(program.stage, program.control, program.code, error);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -964,7 +964,7 @@ std::unique_ptr<OracleEnvironment> MakeOracle(const PackageProgram& program, con
 template <typename F>
 void ParallelFor(size_t count, unsigned threads, F&& body) {
     if (threads == 0) {
-        // As Extract and MakeRecipe read it: every hardware thread.
+        // As Extract reads it: every hardware thread.
         threads = std::max(1u, std::thread::hardware_concurrency());
     }
     std::atomic<size_t> next{0};
@@ -1554,8 +1554,7 @@ void OpenGame(Game& out, const std::filesystem::path& game, const std::filesyste
         out.roots.push_back(out.filesystem.OpenDirectory(Common::FS::PathToUTF8String(game),
                                                          FileSys::OpenMode::Read));
         // An unpacked game (base/exefs beside base/romfs): its title as the game's loader reads
-        // it, the ACI0 program ID of the ExeFS's main.npdm. Its version stays 0, as the game
-        // list's recipe menu sees it.
+        // it, the ACI0 program ID of the ExeFS's main.npdm. Its version stays 0.
         auto romfs = game.lexically_normal();
         if (!romfs.has_filename()) {
             romfs = romfs.parent_path();
@@ -1694,100 +1693,6 @@ int Extract(const std::filesystem::path& game_path, const std::filesystem::path&
         fmt::print("  {:8} {}\n", stage, count);
     }
     return 0;
-}
-
-void PrintReport(const VideoCommon::Nx2Recipe::Report& report) {
-    fmt::print("programs {} (not in the game {}, not lowered {}), environments {} (withheld as "
-               "game data {}), render states {}, records {} (dropped {})\n",
-               report.programs, report.programs_missing, report.programs_failed,
-               report.environments, report.environments_withheld, report.states, report.records,
-               report.records_dropped);
-    for (size_t i = 0; i < std::min<size_t>(report.errors.size(), 8); ++i) {
-        fmt::print("  {}\n", report.errors[i]);
-    }
-    if (report.errors.size() > 8) {
-        fmt::print("  ... {} more\n", report.errors.size() - 8);
-    }
-}
-
-// recipe: the precompiled file without the game's code (video_core/nx2_recipe.h).
-int Recipe(const std::filesystem::path& precompiled, const std::filesystem::path& game_path,
-           const std::filesystem::path& out, unsigned threads) {
-    Game game;
-    auto spill = out;
-    spill += ".spill";
-    OpenGame(game, game_path, spill, "merged");
-    const auto programs = ExtractGame(game, threads);
-    const auto bytes = ReadFile(precompiled);
-    VideoCommon::Nx2Recipe::Report report;
-    const auto recipe = VideoCommon::Nx2Recipe::MakeRecipe(
-        bytes, programs,
-        {.title_id = game.title_id, .game_version = game.version,
-         .cache_version = Load<u32>(bytes, 8)},
-        report, threads);
-    std::ofstream(out, std::ios::binary)
-        .write(reinterpret_cast<const char*>(recipe.data()),
-               static_cast<std::streamsize>(recipe.size()));
-    PrintReport(report);
-    fmt::print("recipe {} bytes (precompiled file {} bytes)\n", recipe.size(), bytes.size());
-    // A record whose program is not in the game's files (one built into its executable, say)
-    // cannot be rebuilt from a recipe, so it is left out; the recipe holds everything else.
-    if (report.records_dropped) {
-        fmt::print("{} records left out: their programs are not in the game's files\n",
-                   report.records_dropped);
-    }
-    return 0;
-}
-
-// assemble: a recipe and the game's own programs give this build's precompiled file.
-int Assemble(const std::filesystem::path& recipe_path, const std::filesystem::path& game_path,
-             const std::filesystem::path& out, unsigned threads) {
-    const auto recipe = ReadFile(recipe_path);
-    const auto header = VideoCommon::Nx2Recipe::ReadHeader(recipe);
-    if (!header) {
-        throw std::runtime_error(recipe_path.string() + " is not a precompile recipe");
-    }
-    Game game;
-    auto spill = out;
-    spill += ".spill";
-    OpenGame(game, game_path, spill, "merged");
-    fmt::print("recipe for {:016X} v{} (facts of cache version {}); game {:016X} v{}\n",
-               header->title_id, header->game_version, header->cache_version, game.title_id,
-               game.version);
-    const auto begin = std::chrono::steady_clock::now();
-    const auto programs = ExtractGame(game, threads);
-    VideoCommon::Nx2Recipe::Report report;
-    const auto file = VideoCommon::Nx2Recipe::Assemble(
-        recipe, programs, VideoCommon::VulkanPipelineCacheVersion, report, threads);
-    std::ofstream(out, std::ios::binary)
-        .write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
-    PrintReport(report);
-    fmt::print("precompiled file {} bytes in {:.1f} s\n", file.size(),
-               std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count());
-    return 0;
-}
-
-// audit: whether a recipe holds any of the game's code, every program of every package and
-// version in the game's files counted. Exit 1 if it does.
-int Audit(const std::filesystem::path& recipe_path, const std::filesystem::path& game_path,
-          unsigned threads) {
-    const auto recipe = ReadFile(recipe_path);
-    if (!VideoCommon::Nx2Recipe::ReadHeader(recipe)) {
-        throw std::runtime_error(recipe_path.string() + " is not a precompile recipe");
-    }
-    Game game;
-    auto spill = recipe_path;
-    spill += ".spill";
-    OpenGame(game, game_path, spill, "union");
-    const auto programs = ExtractGame(game, threads);
-    const auto matches = VideoCommon::Nx2Recipe::FindGameCode(recipe, programs, threads);
-    fmt::print("{} programs checked: {} pieces of their code in the recipe\n",
-               programs.programs.size(), matches.size());
-    for (size_t i = 0; i < std::min<size_t>(matches.size(), 8); ++i) {
-        fmt::print("  program {:016x} +{:#x} at recipe body +{:#x}\n", matches[i].fingerprint,
-                   matches[i].program_offset, matches[i].recipe_offset);
-    }
-    return matches.empty() ? 0 : 1;
 }
 
 /// A shader cache v2 log (lichii-cache.v2.bin) written as a pipeline cache file of the format
@@ -2027,7 +1932,7 @@ int RunTool(int argc, char** argv) {
             std::cout << VideoCommon::VulkanPipelineCacheVersion << '\n';
             return 0;
         }
-        std::filesystem::path pkg, cache, out, priors_path, check_file, game, recipe;
+        std::filesystem::path pkg, cache, out, priors_path, check_file, game;
         std::string packages = "merged";
         std::vector<std::filesystem::path> caches;
         const unsigned hardware_threads = std::thread::hardware_concurrency();
@@ -2042,7 +1947,6 @@ int RunTool(int argc, char** argv) {
             else if (arg == "--priors") priors_path = value;
             else if (arg == "--file") check_file = value;
             else if (arg == "--game") game = value;
-            else if (arg == "--recipe") recipe = value;
             else if (arg == "--packages") packages = value;
             else throw std::runtime_error("Unknown option " + arg);
         }
@@ -2056,21 +1960,6 @@ int RunTool(int argc, char** argv) {
             if (cache.empty() || out.empty())
                 throw std::runtime_error("cache-export needs --cache lichii-cache.v2.bin --out FILE");
             return CacheExport(cache, out);
-        }
-        if (command == "recipe") {
-            if (check_file.empty() || game.empty() || out.empty())
-                throw std::runtime_error("recipe needs --file PRECOMPILED --game GAME --out RECIPE");
-            return Recipe(check_file, game, out, threads);
-        }
-        if (command == "assemble") {
-            if (recipe.empty() || game.empty() || out.empty())
-                throw std::runtime_error("assemble needs --recipe RECIPE --game GAME --out FILE");
-            return Assemble(recipe, game, out, threads);
-        }
-        if (command == "audit") {
-            if (recipe.empty() || game.empty())
-                throw std::runtime_error("audit needs --recipe RECIPE --game GAME");
-            return Audit(recipe, game, threads);
         }
         if (command == "extract") {
             if (game.empty() || out.empty())

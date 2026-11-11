@@ -97,9 +97,6 @@ nx2-precompile validate --pkg PREFIX.programs --cache CACHE.bin --out PREFIX [--
 nx2-precompile cache-export --cache lichii-cache.v2.bin --out CACHE.bin
 nx2-precompile mesh-envs --pkg PREFIX.programs --cache DRAWS.tsv --out PREFIX [--priors FILE]
 nx2-precompile check    --file precompiled.fork-v<N>.nx2prep
-nx2-precompile recipe   --file precompiled.fork-v<N>.nx2prep --game GAME --out GAME.nx2recipe
-nx2-precompile assemble --recipe GAME.nx2recipe --game GAME --out precompiled.fork-v<N>.nx2prep
-nx2-precompile audit    --recipe GAME.nx2recipe --game GAME
 nx2-precompile cache-version
 ```
 
@@ -108,7 +105,7 @@ draws and environments, `build_precompiled.py` with `--k 4 --mesh-k 2`) in one p
 Python: the Python steps are ported to C++ in `video_core/nx2_precompile_build.cpp`, and the file
 is the scripts' byte for byte (checked on Ocarina of Time with one cache and with two, one of them
 of the format before the shader cache v2). It leaves out the checks (`validate`, the held-out
-check, `check`, the SPIR-V emit check) and the recipe. Ocarina of Time: 37 s on 16 threads, against
+check, `check`, the SPIR-V emit check). Ocarina of Time: 37 s on 16 threads, against
 about 50 s for the script.
 
 ## In the emulator
@@ -118,49 +115,30 @@ the tool's commands live in `video_core/nx2_precompile.cpp`):
 
 - The game list's "Build Precompiled Shaders from My Play..." reads the game's files and the
   title's `lichii-cache.v2.bin`, and writes `precompiled.fork-v<N>.nx2prep` next to it, with a
-  progress window. A precompiled file from elsewhere (a recipe) is replaced only after asking.
+  progress window. A precompiled file from elsewhere (the tool) is replaced only after asking.
 - At launch, a Switch 2 game (a NUP) whose cache has recorded 1,000 pipelines or more and has no
   precompiled file gets the offer to build one before it starts (Build now, Not now, Don't ask for
   this game), and again once the cache has grown by a quarter (at least 500) since the last build,
   or by 1,000 since the player said not now. `precompiled_from_play.fork-v<N>.txt` in the title's
   shader folder remembers which (`built N`, `declined N`, `never`). A precompiled file without
-  that note (a recipe's) is left alone.
+  that note (one the tool made) is left alone.
 
 The precompiled file is then prepared as any other (see step 3 above). Its shader code comes from
-the player's own copy of the game, so it is never shared; a recipe made from it can be.
+the player's own copy of the game, so it is never shared.
 
 The extractor used to give its programs and variations in whatever order its threads found them,
 so two runs listed the copies of a shared program in different orders, and the predictions that
 depend on which copy comes first differed. It now puts them in the order they are first found in
 file order (the origin rule already was), so the same game and caches always give the same file.
 
-## Recipes
+## Making a precompiled file with the tool
 
-A precompiled file holds the game's shader code, so it is not something to share. A recipe
-(`video_core/nx2_recipe.h`) is the same file without it: for every pipeline, its render state and,
-for each of its programs, a fingerprint (part of a SHA-256 of the program) and the facts its
-translation asked for. A player turns it back into their own precompiled file with their own copy of
-the game: `assemble`, or in Lichii the game list's "Prepare Precompiled Shaders from Recipe...". The
-Ocarina of Time file of 133,016 pipelines (1.17 GB) is a recipe of 1.3 MB.
-
-A recipe carries no program code or program header. Making one withholds, with its pipelines, any
-environment whose program header is not its code's, whose mesh geometry header is neither derivable
-from the code nor zero, or whose layout is unknown; and it refuses to write a recipe in which it
-finds 32 bytes of any of the game's programs (`Report::environments_withheld`, `FindGameCode`). That
-search is a sampling check, not a proof: it looks for 32-byte windows with at least 16 nonzero
-bytes, starting at every fourth offset of each program. `audit` runs that check on a recipe from
-elsewhere against every program of every package and version in the game's files; run it before
-sharing one. What a recipe does keep from the game are
-the values the translation read: constant buffer values, texture types and formats, storage buffer
-locations. A recipe is made for one game version and one cache version, and is built again when
-either changes. Making the same recipe twice gives the same file.
-
-### Making a recipe for a game
-
-One person does this per game version and cache version; everyone else only needs the recipe.
+The emulator does this itself (see above). The tool's chain is the same, with the checks it adds,
+for working on the predictions:
 
 1. Build Lichii and the tool with `-DENABLE_DEBUG_TOOLS=ON` (targets `yuzu` and `nx2-precompile`).
-   Check `nx2-precompile cache-version` against the Lichii build players will use; they must match.
+   Check `nx2-precompile cache-version` against the Lichii build that will read the file; they must
+   match.
    Install Python 3.11 or newer (no packages needed).
 2. Play the game in Lichii for a while, with the NVIDIA cache size set as above. Every pipeline the
    game builds is recorded in the title's shader cache, `cache/shader/<title id>/lichii-cache.v2.bin`
@@ -181,22 +159,20 @@ One person does this per game version and cache version; everyone else only need
    compute records are the older cache format's records byte for byte, which the other commands
    and the Python scripts read. Caches of the older format are read as they are.
 
-   For an unpacked game, `NX2_GAME` is its `romfs` folder; the recipe takes the game's title ID
-   from the `exefs/main.npdm` beside it, so the game list's recipe menu accepts it.
+   For an unpacked game, `NX2_GAME` is its `romfs` folder.
 
-   About 8 minutes for Ocarina of Time. It writes `out/precompiled.fork-v<N>.nx2prep` and
-   `out/game.nx2recipe` (`NX2_RECIPE` names another), and ends with the audit, which must report
-   0 pieces of code.
-4. Optionally test it: start from an empty shader folder, prepare the recipe in Lichii (right-click
-   the game, "Prepare Precompiled Shaders from Recipe..."), boot, play somewhere new, then run
-   `analyze_session.sh` on that session's cache and log to see what still compiled at runtime.
-5. Share the recipe, named after the game and its version (for example
-   `Ocarina of Time v131072.nx2recipe`). A new game update or a Lichii build with another cache
-   version needs the steps again. For a new cache version, the caches recorded under older ones
-   can still be learned from (the Ocarina of Time file for v54 was built from v52 and v53 caches);
-   only the precompiled file must be built by a tool of the new version. The scripts read every
-   cache in v53's layout, whose task and mesh environments have fields an older layout lacks: a
-   cache whose task or mesh records lack them must be converted first.
+   About 8 minutes for Ocarina of Time (`nx2-precompile build` writes the same file in under a
+   minute, without the checks). It writes `out/precompiled.fork-v<N>.nx2prep`.
+4. Optionally test it: start from an empty shader folder, copy the file into the title's shader
+   folder, boot, play somewhere new, then run `analyze_session.sh` on that session's cache and log
+   to see what still compiled at runtime.
+5. The file holds the game's shader code, lowered: it is for the copy of the game it was made from
+   and is not to be shared. A new game update or a Lichii build with another cache version needs
+   it built again. For a new cache version, the caches recorded under older ones can still be
+   learned from (the Ocarina of Time file for v54 was built from v52 and v53 caches); only the
+   precompiled file must be built by a tool of the new version. The scripts read every cache in
+   v53's layout, whose task and mesh environments have fields an older layout lacks: a cache whose
+   task or mesh records lack them must be converted first.
 
 `run_pipeline.sh CACHE.bin...` runs the whole chain from the game (`NX2_GAME`, its `.nup`) and the
 disk caches recorded while playing it; see the script's header for the other variables. It needs

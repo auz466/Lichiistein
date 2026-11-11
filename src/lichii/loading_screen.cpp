@@ -97,7 +97,7 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     connect(this, &LoadingScreen::LoadProgress, this, &LoadingScreen::OnLoadProgress,
             Qt::QueuedConnection);
 
-    // Shown while shaders are precached or a recipe is prepared: starts the game without waiting
+    // Shown while shaders are precached or precompiled pipelines are prepared: starts the game without waiting
     // for the rest.
     skip_button = new QPushButton(tr("Skip"), this);
     skip_button->setStyleSheet(QString::fromUtf8(SKIP_BUTTON_STYLE));
@@ -246,7 +246,7 @@ void LoadingScreen::ConfirmSkipRecipe() {
            "compilation stutter, because shaders that aren't ready are compiled as they "
            "appear.\n\nWhat is already prepared is kept, and a later launch continues where "
            "this one stops. Preparation runs again only for a new emulator build, a GPU driver "
-           "update, a different GPU or a new shader recipe.\n\nSkip it anyway?"),
+           "update, a different GPU or a new precompiled file.\n\nSkip it anyway?"),
         QMessageBox::Yes | QMessageBox::No, window());
     box->setDefaultButton(QMessageBox::No);
     box->setAttribute(Qt::WA_DeleteOnClose);
