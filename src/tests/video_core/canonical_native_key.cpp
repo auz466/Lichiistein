@@ -95,8 +95,9 @@ TEST_CASE("Draws that differ only in cleared state share a canonical key",
     auto a = MakeState();
     auto b = MakeState();
     b.attribute_types |= u64{2} << 40;            // an attribute the program does not read
-    b.attachments[1].factor_dest_a.Assign(7);     // blending off on target 1
-    b.attachments[4].enable.Assign(1);            // no target 4
+    // Through raw: GCC at -O3 drops the other bits of the word when these are BitField::Assign.
+    b.attachments[1].raw |= u32{7} << 25;         // blending off on target 1
+    b.attachments[4].raw |= u32{1} << 30;         // no target 4
     b.depth_bounds_max = 0;
     CHECK(a.Hash() != b.Hash());
     a.CanonicalizeNative(0b1111);
