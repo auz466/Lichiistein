@@ -3369,7 +3369,9 @@ bool MainWindow::BuildPrecompiledFromPlay(u64 program_id, const std::string& gam
             }
             building = true;
             const unsigned threads = std::max(1U, std::thread::hardware_concurrency() - 1);
-            Common::FS::CreateDirs(out.parent_path());
+            if (!Common::FS::CreateDirs(out.parent_path())) {
+                return {report, "could not create the shader folder"};
+            }
             const std::array caches{cache};
             Precompile::Build(extracted, caches, out, VideoCommon::VulkanPipelineCacheVersion,
                               threads, &build_progress, stop.get_token(), report);
