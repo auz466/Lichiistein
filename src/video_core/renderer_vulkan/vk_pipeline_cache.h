@@ -359,8 +359,13 @@ private:
     std::ifstream precompiled_infos_file; ///< GPU thread only
     std::unordered_set<u64> precompiled_rejected; ///< Keys whose precompiled build failed
 
+    /// Whether native pipeline keys are made canonical (FixedPipelineState::CanonicalizeNative):
+    /// off when Prepare precompiled shaders is Never, so keys are made as without precompiled
+    /// pipelines. Set when a game's disk resources load, before its first key.
+    bool canonical_native_keys = true;
+
     /// Native pipelines: the key without state that cannot change the pipeline (see
-    /// FixedPipelineState::CanonicalizeNative).
+    /// FixedPipelineState::CanonicalizeNative). Unchanged when canonical_native_keys is off.
     void CanonicalizeNativeKey(GraphicsPipelineCacheKey& key,
                                std::span<const Shader::Environment* const> envs) const noexcept;
 

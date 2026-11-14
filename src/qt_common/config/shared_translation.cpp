@@ -411,7 +411,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "background, the shaders most likely to be needed first; the status bar shows the "
               "progress.\nBefore the game starts: the loading screen prepares on every CPU "
               "thread first, with a Skip button that continues in the background.\nEither way, "
-              "work done is kept: closing the game continues it at the next launch. ") +
+              "work done is kept: closing the game continues it at the next launch.\nNever: "
+              "precompiled shaders are neither prepared nor used, and shaders compile the first "
+              "time the game uses them, as without precompiled shaders.\nA change applies at "
+              "the next launch. ") +
                PrecompiledPrepareRerunCauses());
     INSERT(Settings, precache_shaders, tr("Precache shaders before game start:"),
            tr("Builds shaders on the loading screen, on every CPU thread, so they don't stutter "
@@ -869,6 +872,7 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                           {
                               PAIR(PrecompiledPrepare, WhilePlaying, tr("While playing")),
                               PAIR(PrecompiledPrepare, BeforeStart, tr("Before the game starts")),
+                              PAIR(PrecompiledPrepare, Never, tr("Never")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::PrecacheShaders>::Index(),
                           {

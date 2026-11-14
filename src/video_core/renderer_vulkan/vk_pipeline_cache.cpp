@@ -859,6 +859,8 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
       use_vulkan_pipeline_cache{Settings::values.use_vulkan_driver_pipeline_cache.GetValue() &&
                                 !device_.DriverCachesPipelines()},
       serialization_thread(1, "VkPipelineSerialization", {}, Common::ThreadPlacement::Background) {
+    canonical_native_keys =
+        Settings::values.precompiled_prepare.GetValue() != Settings::PrecompiledPrepare::Never;
     // A sixty-fourth of the RAM (16 GB: 256 MB), about 25 KB per evicted pipeline
     const u64 ram = Common::GetMemInfo().TotalPhysicalMemory;
     kept_stages = decltype(kept_stages){ram != 0 ? ram / 64 : u64{256} << 20};
@@ -1289,14 +1291,16 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
     if (maxwell3d->GetNativeMacroEngine().native_turing) {
         native_state.Refresh(*maxwell3d, dynamic_features);
         graphics_key.state = native_state;
-        const VideoCommon::ShaderInfo* const vertex{shader_infos[1]};
-        u32 mask = ~0U;
-        if (maxwell3d->regs.IsMeshEnabled()) {
-            mask = 0;
-        } else if (vertex && !IsUnmaskedVertexProgram(vertex->unique_hash)) {
-            mask = vertex->generic_read_mask;
+        if (canonical_native_keys) {
+            const VideoCommon::ShaderInfo* const vertex{shader_infos[1]};
+            u32 mask = ~0U;
+            if (maxwell3d->regs.IsMeshEnabled()) {
+                mask = 0;
+            } else if (vertex && !IsUnmaskedVertexProgram(vertex->unique_hash)) {
+                mask = vertex->generic_read_mask;
+            }
+            graphics_key.state.CanonicalizeNative(mask);
         }
-        graphics_key.state.CanonicalizeNative(mask);
     } else {
         graphics_key.state.Refresh(*maxwell3d, dynamic_features);
     }
@@ -1477,6 +1481,14 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
                                       const VideoCore::DiskResourceLoadCallback& callback) {
     if (title_id == 0) {
         return;
+    }
+    // Before any key of this game is made, and fixed for the session: a draw's key and the keys
+    // of the records the boot builds have to be made the same way.
+    canonical_native_keys =
+        Settings::values.precompiled_prepare.GetValue() != Settings::PrecompiledPrepare::Never;
+    if (!canonical_native_keys) {
+        LOG_INFO(Render_Vulkan, "Prepare precompiled shaders is Never: native pipeline keys are "
+                                "not made canonical");
     }
     if (!pipeline_cache_filename.empty()) {
         StopBackgroundJobs();
@@ -2412,9 +2424,9 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::stop_token stop_loading,
 void PipelineCache::CanonicalizeNativeKey(
     GraphicsPipelineCacheKey& key,
     std::span<const Shader::Environment* const> envs) const noexcept {
-    if (envs.empty() || !std::ranges::all_of(envs, [](const Shader::Environment* env) {
-            return env->IsNativeProgram();
-        })) {
+    if (!canonical_native_keys || envs.empty() ||
+        !std::ranges::all_of(
+            envs, [](const Shader::Environment* env) { return env->IsNativeProgram(); })) {
         return;
     }
     u32 mask = ~0U;
@@ -2519,6 +2531,11 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     precompiled_blob_hashes.clear();
     const char* enabled = std::getenv("EDEN_NX2_PRECOMPILED");
     if (enabled && enabled[0] == '0') {
+        return;
+    }
+    if (Settings::values.precompiled_prepare.GetValue() == Settings::PrecompiledPrepare::Never) {
+        LOG_INFO(Render_Vulkan, "Precompiled pipelines skipped: Prepare precompiled shaders is "
+                                "Never");
         return;
     }
     // The prepared pipelines are kept by the driver's own cache. Without one they would go to the
@@ -3909,8 +3926,8 @@ bool PipelineCache::TranslateGraphicsStages(ShaderPools& pools, const GraphicsPi
         // Canonical native keys keep the attribute types the header's input map lists. A program
         // that loads another one would read it as disabled: this pipeline is dropped and the
         // program's keys keep every attribute type from now on.
-        if (index == 1 && key.state.dynamic_vertex_input && env.IsNativeProgram() &&
-            env.ShaderStage() == Shader::Stage::VertexB) {
+        if (canonical_native_keys && index == 1 && key.state.dynamic_vertex_input &&
+            env.IsNativeProgram() && env.ShaderStage() == Shader::Stage::VertexB) {
             u32 loads = 0;
             for (u32 attribute = 0; attribute < 32; ++attribute) {
                 if (programs[index].info.loads.Generic(attribute)) {

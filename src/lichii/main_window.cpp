@@ -3371,12 +3371,21 @@ bool MainWindow::BuildPrecompiledFromPlay(u64 program_id, const std::string& gam
                       "game's own shader files.",
                       "", static_cast<int>(report.records))
                        .arg(recorded);
-    text += QStringLiteral("\n\n") +
-            (Settings::values.precompiled_prepare.GetValue() ==
-                     Settings::PrecompiledPrepare::BeforeStart
-                 ? tr("They are prepared on the loading screen the next time the game starts.")
-                 : tr("They are prepared in the background while you play, starting with the "
-                      "next launch; the status bar shows the progress."));
+    text += QStringLiteral("\n\n");
+    switch (Settings::values.precompiled_prepare.GetValue()) {
+    case Settings::PrecompiledPrepare::BeforeStart:
+        text += tr("They are prepared on the loading screen the next time the game starts.");
+        break;
+    case Settings::PrecompiledPrepare::Never:
+        text += tr("Prepare precompiled shaders is set to Never, so they are not prepared or "
+                   "used. Choose While playing or Before the game starts in Configure, "
+                   "Graphics, Advanced to use them.");
+        break;
+    default:
+        text += tr("They are prepared in the background while you play, starting with the "
+                   "next launch; the status bar shows the progress.");
+        break;
+    }
     text += QStringLiteral("\n\n") +
             tr("NVIDIA: set Shader Cache Size to Unlimited in the NVIDIA Control Panel, or the "
                "driver keeps only part of them.");
@@ -3392,7 +3401,8 @@ void MainWindow::OnGameListBuildPrecompiledFromPlay(u64 program_id, const std::s
 /// build its precompiled file from them, and again when much more has been recorded since. Not
 /// for a game whose precompiled file came from elsewhere (the nx2-precompile tool).
 void MainWindow::OfferPrecompiledBuild(u64 title_id, const std::string& game_path) {
-    if (title_id == 0 || !Settings::values.use_disk_shader_cache.GetValue()) {
+    if (title_id == 0 || !Settings::values.use_disk_shader_cache.GetValue() ||
+        Settings::values.precompiled_prepare.GetValue() == Settings::PrecompiledPrepare::Never) {
         return;
     }
     const auto game_file = Core::GetGameFileFromPath(QtCommon::vfs, game_path);
@@ -3446,10 +3456,10 @@ void MainWindow::OfferPrecompiledBuild(u64 title_id, const std::string& game_pat
                        .arg(recorded)) +
             QStringLiteral("\n\n") +
             tr("It reads the game's shader files and takes about a minute and a few GB of "
-               "memory; then the game starts. The shaders are then prepared once (in the "
-               "background while you play, unless set otherwise in Configure, Graphics, "
-               "Advanced). The game list's \"Build Precompiled Shaders from My Play\" does the "
-               "same at any time."),
+               "memory; then the game starts. The shaders are then prepared once, in the "
+               "background while you play or on the loading screen, as Prepare precompiled "
+               "shaders in Configure, Graphics, Advanced sets. The game list's \"Build "
+               "Precompiled Shaders from My Play\" does the same at any time."),
         QMessageBox::NoButton, this);
     QPushButton* const build = box.addButton(tr("Build now"), QMessageBox::AcceptRole);
     QPushButton* const later = box.addButton(tr("Not now"), QMessageBox::RejectRole);
