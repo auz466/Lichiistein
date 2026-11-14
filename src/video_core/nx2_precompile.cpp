@@ -1123,7 +1123,6 @@ int Validate(const std::filesystem::path& pkg, const std::filesystem::path& cach
     std::map<std::pair<u64, std::vector<u8>>, size_t> seen;
     for (auto& record : records) {
         for (auto& env : record.envs) {
-            const Stage stage = env.ShaderStage();
             const u64 hash = NativeShaderHash(env.code);
             items.push_back({&env, hash});
         }

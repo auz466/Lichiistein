@@ -1385,7 +1385,7 @@ PrecompiledCounts WritePrecompiled(const std::filesystem::path& out, const GameT
     std::set<std::pair<u64, u64>> pairs(tables.pairs.begin(), tables.pairs.end());
     // A value no translation reads, which builds since cache version 54 record in each
     // environment: left out, so it does not reach the precompiled file.
-    constexpr u64 ReadPropertiesKey = 0xFFFFFFFFULL << 32;
+    [[maybe_unused]] constexpr u64 ReadPropertiesKey = 0xFFFFFFFFULL << 32;
     std::vector<std::pair<std::vector<u8>, std::vector<CachedEnv>>> recorded_compute;
     std::map<std::vector<u8>, size_t> recorded_compute_index;
     const auto add_compute = [&](const std::vector<u8>& key, CachedEnv env) {
