@@ -2969,11 +2969,23 @@ void MainWindow::OnGameListRemoveFile(u64 program_id, QtCommon::Game::GameListRe
             return tr("Remove Custom Game Configuration?");
         case QtCommon::Game::GameListRemoveTarget::CacheStorage:
             return tr("Remove Cache Storage?");
+        case QtCommon::Game::GameListRemoveTarget::ShaderPreparation:
+            return tr("Remove Shader Preparation?\n\nThe game's precompiled shaders are "
+                      "prepared again at its next launch. The precompiled shaders themselves, "
+                      "the pipeline caches and the GPU driver's own cache stay, so preparing "
+                      "again is faster than the first time.");
         default:
             return QString{};
         }
     }();
 
+    // The running game's preparation writes these files.
+    if (target == QtCommon::Game::GameListRemoveTarget::ShaderPreparation && emulation_running &&
+        QtCommon::system->GetApplicationProcessProgramID() == program_id) {
+        QMessageBox::warning(this, tr("Remove Shader Preparation"),
+                             tr("Stop the game before removing its shader preparation."));
+        return;
+    }
     if (!MainWindow::question(this, tr("Remove File"), question, QMessageBox::Yes | QMessageBox::No,
                               QMessageBox::No)) {
         return;
@@ -2994,6 +3006,9 @@ void MainWindow::OnGameListRemoveFile(u64 program_id, QtCommon::Game::GameListRe
         break;
     case QtCommon::Game::GameListRemoveTarget::CacheStorage:
         QtCommon::Game::RemoveCacheStorage(program_id);
+        break;
+    case QtCommon::Game::GameListRemoveTarget::ShaderPreparation:
+        QtCommon::Game::RemoveShaderPreparation(program_id);
         break;
     }
 }
