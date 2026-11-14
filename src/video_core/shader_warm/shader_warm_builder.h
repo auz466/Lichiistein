@@ -109,11 +109,18 @@ bool TakeWarmBeforeStart();
 void RequestSkipWarm();
 bool TakeSkipWarm();
 
+/// What the Skip button of the precompiled pipelines' preparation on the loading screen chose.
+enum class PrepareSkip : u8 {
+    None,       ///< Not pressed
+    Background, ///< The game starts; the rest is prepared while it runs
+    Session,    ///< The game starts; nothing more is prepared until the next launch
+};
+
 /// Skip button of the precompiled pipelines' preparation on the loading screen: it stops after
 /// its current builds, the game starts and a later launch continues. Taken (and cleared) by the
 /// renderer.
-void RequestSkipPreparation();
-bool TakeSkipPreparation();
+void RequestSkipPreparation(PrepareSkip choice);
+PrepareSkip TakeSkipPreparation();
 
 /// Progress of the precompiled pipelines' preparation while the game runs, for the status bar:
 /// records done (prepared, failed or skipped) of `total`. Total 0: none is running.

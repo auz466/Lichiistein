@@ -295,9 +295,10 @@ private:
 
     struct PrecompiledPrep;
     enum class PrecompiledPrepOutcome {
-        Finished, ///< Every record prepared
-        Stopped,  ///< The load or the session stopped; a later launch continues
-        Skipped,  ///< Skipped from the loading screen; the background continues
+        Finished,          ///< Every record prepared
+        Stopped,           ///< The load or the session stopped; a later launch continues
+        Skipped,           ///< Skipped from the loading screen; the background continues
+        SkippedForSession, ///< Skipped from the loading screen; nothing more this session
     };
 
     /// Prepares the records of `prep` not prepared yet: on the loading screen (`before_start`,

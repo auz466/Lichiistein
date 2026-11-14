@@ -278,7 +278,7 @@ void WriteHeader(std::ofstream& out) {
 
 std::atomic<bool> warm_before_start{false};
 std::atomic<bool> skip_warm{false};
-std::atomic<bool> skip_preparation{false};
+std::atomic<PrepareSkip> skip_preparation{PrepareSkip::None};
 std::atomic<u64> preparation_done{0};
 std::atomic<u64> preparation_total{0};
 
@@ -421,12 +421,12 @@ bool TakeSkipWarm() {
     return skip_warm.exchange(false, std::memory_order_relaxed);
 }
 
-void RequestSkipPreparation() {
-    skip_preparation.store(true, std::memory_order_relaxed);
+void RequestSkipPreparation(PrepareSkip choice) {
+    skip_preparation.store(choice, std::memory_order_relaxed);
 }
 
-bool TakeSkipPreparation() {
-    return skip_preparation.exchange(false, std::memory_order_relaxed);
+PrepareSkip TakeSkipPreparation() {
+    return skip_preparation.exchange(PrepareSkip::None, std::memory_order_relaxed);
 }
 
 void SetPreparationProgress(u64 done, u64 total) {

@@ -2733,6 +2733,14 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
         // Drops a press left over from a launch that finished preparing first.
         VideoCommon::ShaderWarm::TakeSkipPreparation();
         const auto outcome = RunPrecompiledPrep(prep, stop_loading, true, &callback);
+        if (outcome == PrecompiledPrepOutcome::SkippedForSession) {
+            // The jobs not started are dropped and the running ones finish; what they prepared
+            // still serves draws (TakePrecompiledPublished), and the next launch continues.
+            StopPrecompiledPrep();
+            LOG_INFO(Render_Vulkan, "Precompiled pipelines: skipped from the loading screen, "
+                                    "none prepared while the game runs this session");
+            return;
+        }
         if (outcome != PrecompiledPrepOutcome::Skipped) {
             if (outcome == PrecompiledPrepOutcome::Stopped) {
                 StopPrecompiledPrep();
@@ -2784,9 +2792,14 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
             outcome = PrecompiledPrepOutcome::Stopped;
             break;
         }
-        if (before_start && VideoCommon::ShaderWarm::TakeSkipPreparation()) {
-            outcome = PrecompiledPrepOutcome::Skipped;
-            break;
+        if (before_start) {
+            using VideoCommon::ShaderWarm::PrepareSkip;
+            const PrepareSkip skip = VideoCommon::ShaderWarm::TakeSkipPreparation();
+            if (skip != PrepareSkip::None) {
+                outcome = skip == PrepareSkip::Session ? PrecompiledPrepOutcome::SkippedForSession
+                                                       : PrecompiledPrepOutcome::Skipped;
+                break;
+            }
         }
         u32 index{};
         {
@@ -2893,7 +2906,8 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
              }},
             &batch);
     }
-    if (outcome == PrecompiledPrepOutcome::Skipped) {
+    if (outcome == PrecompiledPrepOutcome::Skipped ||
+        outcome == PrecompiledPrepOutcome::SkippedForSession) {
         // The jobs in flight finish while the game starts; the background run continues after
         // them. The loading screen goes.
         std::scoped_lock lock{prep.mutex};

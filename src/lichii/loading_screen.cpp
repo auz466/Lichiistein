@@ -243,24 +243,36 @@ void LoadingScreen::ConfirmSkipPreparation() {
     if (skip_confirm) {
         return;
     }
+    using VideoCommon::ShaderWarm::PrepareSkip;
     // On the main window: the loading screen's style sheet would otherwise apply to the dialog.
     auto* const box = new QMessageBox(
         QMessageBox::Warning, tr("Skip Shader Preparation?"),
-        tr("The game will start right away and the rest is prepared in the background on a "
-           "few shader threads, which can take a long while. Until then, expect more shader "
-           "compilation stutter, because shaders that aren't ready are compiled as they "
-           "appear.\n\nWhat is already prepared is kept, and a later launch continues where "
-           "this one stops. %1\n\nSkip it anyway?")
+        tr("The game can start right away. Until all shaders are prepared, expect more "
+           "shader compilation stutter, because shaders that aren't ready are compiled as the "
+           "game first uses them.\n\nCompile in background: the rest is prepared on a few "
+           "shader threads while you play, which can take a long while.\nSkip: nothing more is "
+           "prepared until the next launch.\n\nEither way, what is already prepared is kept, "
+           "and a later launch continues where this one stops. %1")
             .arg(ConfigurationShared::PrecompiledPrepareRerunCauses()),
-        QMessageBox::Yes | QMessageBox::No, window());
-    box->setDefaultButton(QMessageBox::No);
+        QMessageBox::NoButton, window());
+    QPushButton* const background =
+        box->addButton(tr("Compile in background"), QMessageBox::AcceptRole);
+    QPushButton* const session = box->addButton(tr("Skip"), QMessageBox::DestructiveRole);
+    QPushButton* const cancel = box->addButton(QMessageBox::Cancel);
+    box->setDefaultButton(cancel);
+    box->setEscapeButton(cancel);
     box->setAttribute(Qt::WA_DeleteOnClose);
-    connect(box, &QMessageBox::finished, this, [this](int result) {
-        if (result == QMessageBox::Yes && previous_stage == VideoCore::LoadCallbackStage::Precompiled) {
-            VideoCommon::ShaderWarm::RequestSkipPreparation();
-            skip_button->setEnabled(false);
-        }
-    });
+    connect(box, &QMessageBox::buttonClicked, this,
+            [this, background, session](QAbstractButton* button) {
+                if (previous_stage != VideoCore::LoadCallbackStage::Precompiled) {
+                    return;
+                }
+                if (button == background || button == session) {
+                    VideoCommon::ShaderWarm::RequestSkipPreparation(
+                        button == background ? PrepareSkip::Background : PrepareSkip::Session);
+                    skip_button->setEnabled(false);
+                }
+            });
     skip_confirm = box;
     box->open();
 }
