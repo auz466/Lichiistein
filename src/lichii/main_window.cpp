@@ -3309,10 +3309,13 @@ GameShaderRoots OpenGameShaderRoots(const std::string& game_path) {
 
 /// What the launch knows of a precompiled file built from the player's own play
 /// (<shader dir>/<title>/precompiled_from_play.fork-v<N>.txt): built from how many recorded
-/// pipelines, or the player declined at how many, or never wants to be asked.
+/// pipelines, or the player declined at how many, or never wants to be asked. A "built" state
+/// also keeps the count a rebuild offer was last declined at (asked), so the next offer waits for
+/// more play than that.
 struct PlayBuildState {
     enum class Kind { None, Built, Declined, Never } kind{Kind::None};
     u64 recorded{};
+    u64 asked{};
 };
 
 std::filesystem::path TitleShaderDir(u64 program_id) {
@@ -3334,12 +3337,16 @@ PlayBuildState ReadPlayBuildState(u64 program_id) {
     std::ifstream file(PlayBuildStatePath(program_id));
     std::string kind;
     u64 recorded = 0;
+    u64 asked = 0;
     if (!(file >> kind)) {
         return {};
     }
     file >> recorded;
+    if (!(file >> asked)) {
+        asked = 0;
+    }
     if (kind == "built") {
-        return {PlayBuildState::Kind::Built, recorded};
+        return {PlayBuildState::Kind::Built, recorded, asked};
     }
     if (kind == "declined") {
         return {PlayBuildState::Kind::Declined, recorded};
@@ -3350,11 +3357,15 @@ PlayBuildState ReadPlayBuildState(u64 program_id) {
     return {};
 }
 
-void WritePlayBuildState(u64 program_id, std::string_view kind, u64 recorded) {
+void WritePlayBuildState(u64 program_id, std::string_view kind, u64 recorded, u64 asked = 0) {
     std::error_code error;
     std::filesystem::create_directories(TitleShaderDir(program_id), error);
     std::ofstream file(PlayBuildStatePath(program_id), std::ios::trunc);
-    file << kind << ' ' << recorded << '\n';
+    file << kind << ' ' << recorded;
+    if (asked != 0) {
+        file << ' ' << asked;
+    }
+    file << '\n';
 }
 
 /// Recorded pipelines before the launch offers to build a precompiled file from them.
@@ -3534,8 +3545,13 @@ void MainWindow::OfferPrecompiledBuild(u64 title_id, const std::string& game_pat
         }
         break;
     case PlayBuildState::Kind::Built:
-        // A quarter more, at least 500.
-        wanted = state.recorded + std::max<u64>(500, state.recorded / 4);
+        // A quarter more, at least 1000; after a declined offer, that much more than when it was
+        // declined, so a game that records shaders fast is not asked at every launch.
+        wanted = state.recorded + std::max<u64>(PlayBuildFirstThreshold, state.recorded / 4);
+        if (state.asked != 0) {
+            wanted = std::max(wanted, state.asked + std::max<u64>(PlayBuildFirstThreshold,
+                                                                  state.asked / 4));
+        }
         if (!have_file) {
             wanted = PlayBuildFirstThreshold;
         }
@@ -3587,8 +3603,11 @@ void MainWindow::OfferPrecompiledBuild(u64 title_id, const std::string& game_pat
         WritePlayBuildState(title_id, "never", recorded);
     } else {
         (void)later;
-        WritePlayBuildState(title_id, rebuild ? "built" : "declined",
-                            rebuild ? state.recorded : recorded);
+        if (rebuild) {
+            WritePlayBuildState(title_id, "built", state.recorded, recorded);
+        } else {
+            WritePlayBuildState(title_id, "declined", recorded);
+        }
     }
 }
 
