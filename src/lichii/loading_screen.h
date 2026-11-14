@@ -79,7 +79,7 @@ private:
     VideoCore::LoadCallbackStage previous_stage;
 
     QGraphicsOpacityEffect* opacity_effect = nullptr;
-    void ConfirmSkipRecipe();
+    void ConfirmSkipPreparation();
 
     QPushButton* skip_button = nullptr;
     QPointer<QMessageBox> skip_confirm;

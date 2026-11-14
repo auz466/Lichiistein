@@ -47,7 +47,7 @@ enum class LoadCallbackStage {
     /// Last, so the values of the others stay as frontends that know only those expect.
     Warm,
     /// The precompiled pipelines being prepared for this driver and build (pipelines done / total).
-    Recipe,
+    Precompiled,
 };
 using DiskResourceLoadCallback = std::function<void(LoadCallbackStage, std::size_t, std::size_t)>;
 

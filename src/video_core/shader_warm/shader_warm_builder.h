@@ -109,19 +109,20 @@ bool TakeWarmBeforeStart();
 void RequestSkipWarm();
 bool TakeSkipWarm();
 
-/// Skip button of the precompiled pipelines' preparation: it stops after its current builds and the game starts,
-/// and a later launch prepares from the start. Taken (and cleared) by the renderer.
-void RequestSkipRecipe();
-bool TakeSkipRecipe();
+/// Skip button of the precompiled pipelines' preparation on the loading screen: it stops after
+/// its current builds, the game starts and a later launch continues. Taken (and cleared) by the
+/// renderer.
+void RequestSkipPreparation();
+bool TakeSkipPreparation();
 
 /// Progress of the precompiled pipelines' preparation while the game runs, for the status bar:
 /// records done (prepared, failed or skipped) of `total`. Total 0: none is running.
-struct RecipeProgress {
+struct PreparationProgress {
     u64 done{};
     u64 total{};
 };
-void SetRecipeProgress(u64 done, u64 total);
-RecipeProgress GetRecipeProgress();
+void SetPreparationProgress(u64 done, u64 total);
+PreparationProgress GetPreparationProgress();
 
 /// Removes the title's precache file, its marker and count, the list of precached graphics
 /// pipelines older builds kept and a leftover temporary file (rebuild or delete from the UI). Returns false when a file exists but cannot be removed, with

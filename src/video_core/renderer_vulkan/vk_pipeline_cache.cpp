@@ -698,9 +698,9 @@ struct PipelineCache::PrecompiledPrep {
         const size_t total = records.size();
         if (prep_report_due(done, total)) {
             if (callback) {
-                (*callback)(VideoCore::LoadCallbackStage::Recipe, done, total);
+                (*callback)(VideoCore::LoadCallbackStage::Precompiled, done, total);
             }
-            VideoCommon::ShaderWarm::SetRecipeProgress(done, total);
+            VideoCommon::ShaderWarm::SetPreparationProgress(done, total);
         }
     }
 
@@ -2460,7 +2460,7 @@ void PipelineCache::StopPrecompiledPrep() {
         batch.Wait();
     }
     prep.store.Close();
-    VideoCommon::ShaderWarm::SetRecipeProgress(0, 0);
+    VideoCommon::ShaderWarm::SetPreparationProgress(0, 0);
 }
 
 void PipelineCache::AddPrecompiledRecord(const VideoCommon::PrecompiledStore::Record& record) {
@@ -2731,7 +2731,7 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     if (Settings::values.precompiled_prepare.GetValue() ==
         Settings::PrecompiledPrepare::BeforeStart) {
         // Drops a press left over from a launch that finished preparing first.
-        VideoCommon::ShaderWarm::TakeSkipRecipe();
+        VideoCommon::ShaderWarm::TakeSkipPreparation();
         const auto outcome = RunPrecompiledPrep(prep, stop_loading, true, &callback);
         if (outcome != PrecompiledPrepOutcome::Skipped) {
             if (outcome == PrecompiledPrepOutcome::Stopped) {
@@ -2784,7 +2784,7 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
             outcome = PrecompiledPrepOutcome::Stopped;
             break;
         }
-        if (before_start && VideoCommon::ShaderWarm::TakeSkipRecipe()) {
+        if (before_start && VideoCommon::ShaderWarm::TakeSkipPreparation()) {
             outcome = PrecompiledPrepOutcome::Skipped;
             break;
         }
@@ -2925,7 +2925,7 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
                                                         : "");
     if (outcome == PrecompiledPrepOutcome::Finished) {
         prep.store.Close();
-        VideoCommon::ShaderWarm::SetRecipeProgress(0, 0);
+        VideoCommon::ShaderWarm::SetPreparationProgress(0, 0);
     }
     return outcome;
 }

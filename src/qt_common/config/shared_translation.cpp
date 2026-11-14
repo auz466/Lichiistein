@@ -26,6 +26,15 @@ namespace ConfigurationShared {
  * @param parent Object used for translation lookups.
  * @return The translation map.
  */
+QString PrecompiledPrepareRerunCauses() {
+    // The parts of the store's stamp (PipelineCache::PreparePrecompiled) a player can change.
+    return QCoreApplication::translate(
+        "ConfigurationShared",
+        "Preparation runs again after an emulator update, a GPU driver update, a different GPU, "
+        "new precompiled shaders, or a change to the resolution, Fix bloom effects, Disable Loop "
+        "safety checks or graphics debugging.");
+}
+
 std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     std::unique_ptr<TranslationMap> translations = std::make_unique<TranslationMap>();
     const auto& tr = [](const char* text) -> QString { return QCoreApplication::translate("ConfigurationShared", text); };
@@ -395,15 +404,15 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "time significantly in cases where the Vulkan driver does not store pipeline cache "
               "files internally."));
     INSERT(Settings, precompiled_prepare, tr("Prepare precompiled shaders:"),
-           tr("Only for games with a precompiled shader file (built from your play in the game "
-              "list). Preparing compiles every pipeline in it once, so new areas don't stutter, "
-              "and takes a while (about 10 minutes for Ocarina of Time on every CPU thread). It "
-              "runs again after an emulator update, a GPU driver update or a new precompiled "
-              "file.\nWhile playing: the game starts right away and a few shader threads prepare "
-              "in the background, the pipelines most likely to be needed first; the status bar "
-              "shows the progress.\nBefore the game starts: the loading screen prepares on every "
-              "CPU thread first, with a Skip button that continues in the background.\nEither "
-              "way, work done is kept: closing the game continues it at the next launch."));
+           tr("Only for games with precompiled shaders (built from your play in the game list). "
+              "Preparing compiles every shader in them once, so new areas don't stutter, and "
+              "takes a while (about 10 minutes for Ocarina of Time on every CPU thread).\nWhile "
+              "playing: the game starts right away and a few shader threads prepare in the "
+              "background, the shaders most likely to be needed first; the status bar shows the "
+              "progress.\nBefore the game starts: the loading screen prepares on every CPU "
+              "thread first, with a Skip button that continues in the background.\nEither way, "
+              "work done is kept: closing the game continues it at the next launch. ") +
+               PrecompiledPrepareRerunCauses());
     INSERT(Settings, precache_shaders, tr("Precache shaders before game start:"),
            tr("Builds shaders on the loading screen, on every CPU thread, so they don't stutter "
               "the first time the game uses them: the compute shaders found in the game files. "

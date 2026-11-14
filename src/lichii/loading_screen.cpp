@@ -17,6 +17,7 @@
 #include "common/container/unordered_map.h"
 #include "core/frontend/framebuffer_layout.h"
 #include "core/loader/loader.h"
+#include "qt_common/config/shared_translation.h"
 #include "ui_loading_screen.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
@@ -97,17 +98,15 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     connect(this, &LoadingScreen::LoadProgress, this, &LoadingScreen::OnLoadProgress,
             Qt::QueuedConnection);
 
-    // Shown while shaders are precached or precompiled pipelines are prepared: starts the game without waiting
-    // for the rest.
+    // Shown while shaders are precached or precompiled shaders are prepared: starts the game
+    // without waiting for the rest. Its tooltip is set per stage (OnLoadProgress).
     skip_button = new QPushButton(tr("Skip"), this);
     skip_button->setStyleSheet(QString::fromUtf8(SKIP_BUTTON_STYLE));
-    skip_button->setToolTip(tr("Start the game now. The shaders not precached yet are precached "
-                               "on a later launch."));
     skip_button->hide();
     ui->verticalLayout->insertWidget(2, skip_button, 0, Qt::AlignHCenter | Qt::AlignTop);
     connect(skip_button, &QPushButton::clicked, this, [this] {
-        if (previous_stage == VideoCore::LoadCallbackStage::Recipe) {
-            ConfirmSkipRecipe();
+        if (previous_stage == VideoCore::LoadCallbackStage::Precompiled) {
+            ConfirmSkipPreparation();
             return;
         }
         VideoCommon::ShaderWarm::RequestSkipWarm();
@@ -120,14 +119,14 @@ LoadingScreen::LoadingScreen(QWidget* parent)
         {VideoCore::LoadCallbackStage::Build, tr("Loading Shaders %1 / %2")},
         {VideoCore::LoadCallbackStage::Complete, tr("Launching...")},
         {VideoCore::LoadCallbackStage::Warm, tr("Precaching shaders %1 / %2")},
-        {VideoCore::LoadCallbackStage::Recipe, tr("Preparing shaders %1 / %2")},
+        {VideoCore::LoadCallbackStage::Precompiled, tr("Preparing shaders %1 / %2")},
     };
     progressbar_style = {
         {VideoCore::LoadCallbackStage::Prepare, PROGRESSBAR_STYLE_PREPARE},
         {VideoCore::LoadCallbackStage::Build, PROGRESSBAR_STYLE_BUILD},
         {VideoCore::LoadCallbackStage::Complete, PROGRESSBAR_STYLE_COMPLETE},
         {VideoCore::LoadCallbackStage::Warm, PROGRESSBAR_STYLE_BUILD},
-        {VideoCore::LoadCallbackStage::Recipe, PROGRESSBAR_STYLE_BUILD},
+        {VideoCore::LoadCallbackStage::Precompiled, PROGRESSBAR_STYLE_BUILD},
     };
 }
 
@@ -179,8 +178,14 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
             ui->progress_bar->show();
         }
         skip_button->setVisible(stage == VideoCore::LoadCallbackStage::Warm ||
-                                stage == VideoCore::LoadCallbackStage::Recipe);
+                                stage == VideoCore::LoadCallbackStage::Precompiled);
         skip_button->setEnabled(true);
+        skip_button->setToolTip(
+            stage == VideoCore::LoadCallbackStage::Precompiled
+                ? tr("Start the game now. What is already prepared is kept, and the rest can be "
+                     "prepared in the background while you play.")
+                : tr("Start the game now. The shaders not precached yet are precached on a later "
+                     "launch."));
         previous_stage = stage;
         // Preparation can finish while its confirmation is still open.
         if (skip_confirm) {
@@ -224,7 +229,7 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
     // update labels and progress bar
     if (stage == VideoCore::LoadCallbackStage::Build ||
         stage == VideoCore::LoadCallbackStage::Warm ||
-        stage == VideoCore::LoadCallbackStage::Recipe) {
+        stage == VideoCore::LoadCallbackStage::Precompiled) {
         ui->stage->setText(stage_translations[stage].arg(value).arg(total));
     } else {
         ui->stage->setText(stage_translations[stage]);
@@ -234,7 +239,7 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
     previous_time = now;
 }
 
-void LoadingScreen::ConfirmSkipRecipe() {
+void LoadingScreen::ConfirmSkipPreparation() {
     if (skip_confirm) {
         return;
     }
@@ -245,14 +250,14 @@ void LoadingScreen::ConfirmSkipRecipe() {
            "few shader threads, which can take a long while. Until then, expect more shader "
            "compilation stutter, because shaders that aren't ready are compiled as they "
            "appear.\n\nWhat is already prepared is kept, and a later launch continues where "
-           "this one stops. Preparation runs again only for a new emulator build, a GPU driver "
-           "update, a different GPU or a new precompiled file.\n\nSkip it anyway?"),
+           "this one stops. %1\n\nSkip it anyway?")
+            .arg(ConfigurationShared::PrecompiledPrepareRerunCauses()),
         QMessageBox::Yes | QMessageBox::No, window());
     box->setDefaultButton(QMessageBox::No);
     box->setAttribute(Qt::WA_DeleteOnClose);
     connect(box, &QMessageBox::finished, this, [this](int result) {
-        if (result == QMessageBox::Yes && previous_stage == VideoCore::LoadCallbackStage::Recipe) {
-            VideoCommon::ShaderWarm::RequestSkipRecipe();
+        if (result == QMessageBox::Yes && previous_stage == VideoCore::LoadCallbackStage::Precompiled) {
+            VideoCommon::ShaderWarm::RequestSkipPreparation();
             skip_button->setEnabled(false);
         }
     });

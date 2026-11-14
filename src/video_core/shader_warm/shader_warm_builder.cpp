@@ -278,9 +278,9 @@ void WriteHeader(std::ofstream& out) {
 
 std::atomic<bool> warm_before_start{false};
 std::atomic<bool> skip_warm{false};
-std::atomic<bool> skip_recipe{false};
-std::atomic<u64> recipe_done{0};
-std::atomic<u64> recipe_total{0};
+std::atomic<bool> skip_preparation{false};
+std::atomic<u64> preparation_done{0};
+std::atomic<u64> preparation_total{0};
 
 /// Records `entries` for the finished precache file at `warm_file` (see WarmCountPath).
 void WriteWarmCount(const fs::path& warm_file, u64 entries) {
@@ -421,22 +421,22 @@ bool TakeSkipWarm() {
     return skip_warm.exchange(false, std::memory_order_relaxed);
 }
 
-void RequestSkipRecipe() {
-    skip_recipe.store(true, std::memory_order_relaxed);
+void RequestSkipPreparation() {
+    skip_preparation.store(true, std::memory_order_relaxed);
 }
 
-bool TakeSkipRecipe() {
-    return skip_recipe.exchange(false, std::memory_order_relaxed);
+bool TakeSkipPreparation() {
+    return skip_preparation.exchange(false, std::memory_order_relaxed);
 }
 
-void SetRecipeProgress(u64 done, u64 total) {
-    recipe_done.store(done, std::memory_order_relaxed);
-    recipe_total.store(total, std::memory_order_relaxed);
+void SetPreparationProgress(u64 done, u64 total) {
+    preparation_done.store(done, std::memory_order_relaxed);
+    preparation_total.store(total, std::memory_order_relaxed);
 }
 
-RecipeProgress GetRecipeProgress() {
-    return {.done = recipe_done.load(std::memory_order_relaxed),
-            .total = recipe_total.load(std::memory_order_relaxed)};
+PreparationProgress GetPreparationProgress() {
+    return {.done = preparation_done.load(std::memory_order_relaxed),
+            .total = preparation_total.load(std::memory_order_relaxed)};
 }
 
 bool DeleteWarmFiles(u64 title_id, std::string* error) {

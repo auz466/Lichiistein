@@ -3339,7 +3339,7 @@ bool MainWindow::BuildPrecompiledFromPlay(u64 program_id, const std::string& gam
                 progress.setValue(800);
                 break;
             case Precompile::BuildStep::Writing:
-                progress.setLabelText(tr("Predicting the pipelines and writing them..."));
+                progress.setLabelText(tr("Predicting the shaders and writing them..."));
                 progress.setValue(900);
                 break;
             }
@@ -3367,8 +3367,8 @@ bool MainWindow::BuildPrecompiledFromPlay(u64 program_id, const std::string& gam
         std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
     LOG_INFO(Frontend, "Precompiled file built from {} recorded pipelines: {} records in {:.1f} s",
              recorded, report.records, seconds);
-    QString text = tr("%n pipeline(s) were predicted from the %1 shaders your play recorded "
-                      "and the game's own shader files.",
+    QString text = tr("%n shader(s) were predicted from the %1 your play recorded and the "
+                      "game's own shader files.",
                       "", static_cast<int>(report.records))
                        .arg(recorded);
     text += QStringLiteral("\n\n") +
@@ -5730,7 +5730,7 @@ void MainWindow::UpdateStatusBar() {
     } else {
         shader_building_label->setVisible(false);
     }
-    const auto preparing = VideoCommon::ShaderWarm::GetRecipeProgress();
+    const auto preparing = VideoCommon::ShaderWarm::GetPreparationProgress();
     if (preparing.total != 0 && preparing.done < preparing.total) {
         shader_prepare_label->setText(
             tr("Preparing shaders: %1%")

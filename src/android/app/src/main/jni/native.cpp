@@ -483,7 +483,7 @@ void EmulationSession::LoadDiskCacheProgress(VideoCore::LoadCallbackStage stage,
                                              int max) {
     // The app has no precache stage: it shows as shader building.
     if (stage == VideoCore::LoadCallbackStage::Warm ||
-        stage == VideoCore::LoadCallbackStage::Recipe) {
+        stage == VideoCore::LoadCallbackStage::Precompiled) {
         stage = VideoCore::LoadCallbackStage::Build;
     }
     JNIEnv* env = Common::Android::GetEnvForThread();
