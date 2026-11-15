@@ -3510,8 +3510,10 @@ bool MainWindow::BuildPrecompiledFromPlay(u64 program_id, const std::string& gam
         break;
     }
     text += QStringLiteral("\n\n") +
-            tr("NVIDIA: set Shader Cache Size to Unlimited in the NVIDIA Control Panel, or the "
-               "driver keeps only part of them.");
+            tr("Raise your graphics driver's shader cache size, or the driver keeps only part of "
+               "them: on NVIDIA, set Shader Cache Size to Unlimited in the NVIDIA Control Panel; "
+               "on Linux with Mesa (AMD, Intel), set MESA_SHADER_CACHE_MAX_SIZE, for example "
+               "to 10G.");
     QMessageBox::information(this, title, text);
     return true;
 }
