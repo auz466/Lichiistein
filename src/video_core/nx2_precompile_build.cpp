@@ -178,6 +178,11 @@ bool HashesPastPrefix(std::span<const u8> state) {
 
 std::vector<u8> Canonical(std::span<const u8> state, u32 read_mask) {
     std::vector<u8> b(state.begin(), state.end());
+    // The driver is left out, as the emulator reads keys (ClearDriverFields) and as the shader
+    // cache v2 records them. A cache of the format before it holds the driver's id and version:
+    // with them kept, a pipeline recorded in both formats, or before and after a driver update,
+    // counts as two states of its pair, and the model's scene states split by driver.
+    std::fill_n(b.begin() + DriverFieldsOffset, DriverFieldsSize, u8{0});
     const u32 raw1 = U32(b, 0);
     if (raw1 & DynamicVertexInput) {
         u64 types;
@@ -285,13 +290,14 @@ struct ShaderInfo {
     std::string pixel_class;
 };
 
-/// A pixel program's structural class, from its header: the render targets it writes and whether
-/// it discards pixels. Programs that discard are drawn with alpha test and blend states of their
-/// own, so a program never recorded takes its render target part from the ones like it.
+} // Anonymous namespace
+
 std::string PixelClass(std::span<const u8> sph) {
     const u32 kills_pixels = (U32(sph, 0) >> 15) & 1;
     return fmt::format("{}/{}", U32(sph, 0x48), kills_pixels);
 }
+
+namespace {
 
 enum class Level : u8 { Own, Fine, Coarse, Class, Global };
 constexpr std::array<double, 5> LevelWeights{1.0, 0.6, 0.25, 0.25, 0.04};
@@ -466,7 +472,8 @@ std::string Hex(u64 value) {
     return fmt::format("{:016x}", value);
 }
 
-/// The record's key with the bytes the pipeline doesn't depend on cleared (canonical_key).
+} // Anonymous namespace
+
 std::vector<u8> CanonicalKey(const CachedPipeline& record) {
     const auto& key = record.key;
     const CachedEnv* vertex = nullptr;
@@ -478,12 +485,7 @@ std::vector<u8> CanonicalKey(const CachedPipeline& record) {
         mesh |= env.stage == StageTask || env.stage == StageMesh;
     }
     const u32 mask = mesh ? 0 : (vertex ? AttributeReadMask(vertex->sph) : 0xFFFFFFFFU);
-    auto state = Canonical(std::span<const u8>(key).subspan(StateOffset, StateSize), mask);
-    // Keys leave the driver out, as the emulator reads them (ClearDriverFields) and as the shader
-    // cache v2 records them. A cache of the format before it holds the driver's id and version:
-    // with them kept, a pipeline recorded in both formats, or before and after a driver update,
-    // counts as two states of its pair, and the model's scene states split by driver.
-    std::fill_n(state.begin() + DriverFieldsOffset, DriverFieldsSize, u8{0});
+    const auto state = Canonical(std::span<const u8>(key).subspan(StateOffset, StateSize), mask);
     std::vector<u8> out(key.begin(), key.begin() + StateOffset);
     out.insert(out.end(), state.begin(), state.end());
     if (HashesPastPrefix(state)) {
@@ -493,6 +495,8 @@ std::vector<u8> CanonicalKey(const CachedPipeline& record) {
     }
     return out;
 }
+
+namespace {
 
 /// The precompiled file's environments and records (build_precompiled.py Writer).
 class Writer {
@@ -1489,7 +1493,7 @@ PrecompiledCounts WritePrecompiled(const std::filesystem::path& out, const GameT
         const auto vs = oracle_info(vh, true);
         const auto fs = oracle_info(fh, false);
         u32 added = 0;
-        for (auto state : model.Candidates(vs, fs, options.k + 2)) {
+        for (auto state : model.Candidates(vs, fs, options.k + CandidateSlack(options.k))) {
             if (HashesPastPrefix(state)) {
                 continue;
             }
@@ -1504,6 +1508,9 @@ PrecompiledCounts WritePrecompiled(const std::filesystem::path& out, const GameT
             if (added >= options.k) {
                 break;
             }
+        }
+        if (added < options.k) {
+            count("pair short of predicted states", 1);
         }
     }
 

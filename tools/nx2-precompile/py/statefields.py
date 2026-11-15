@@ -3,6 +3,7 @@ import struct
 
 STATE_OFF = 48          # unique_hashes[6] come first in the 1056-byte graphics key
 STATE_LEN = 112
+DRIVER_OFF, DRIVER_LEN = 16, 8  # driver_id, driver_version: never part of the pipeline
 
 
 def u32(b, o):
@@ -73,6 +74,10 @@ def canonical(state: bytes, read_mask: int | None) -> bytes:
     blending is dynamic, blend equations/factors of attachments whose blending is off and
     attachments past the last colour target."""
     b = bytearray(state)
+    # The driver is left out, as the emulator reads keys and as the shader cache v2 records them:
+    # a cache of the format before it holds the driver's id and version, and with them kept a
+    # pipeline recorded in both formats, or before and after a driver update, counts twice.
+    b[DRIVER_OFF:DRIVER_OFF + DRIVER_LEN] = bytes(DRIVER_LEN)
     raw1 = u32(b, 0)
     if read_mask is not None and raw1 & DYNAMIC_VERTEX_INPUT:
         types = int.from_bytes(b[64:72], 'little')

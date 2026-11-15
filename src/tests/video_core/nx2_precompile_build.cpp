@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <array>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "video_core/nx2_precompile.h"
 #include "video_core/nx2_precompile_build.h"
 
 namespace {
@@ -148,4 +151,59 @@ TEST_CASE("Nx2Precompile: graphics key hashes cover the state the key's flags na
     REQUIRE(GraphicsKeyHash(key) == base);
     key[48 + 100] = 1;
     REQUIRE(GraphicsKeyHash(key) != base);
+}
+
+TEST_CASE("Nx2Precompile: canonical keys leave the driver out", "[video_core]") {
+    // A vertex/pixel pipeline with dynamic vertex input, recorded twice: in a cache of the format
+    // before v2 with a driver's id and version, and in a v2 cache without them.
+    CachedEnv vertex;
+    vertex.stage = 0;
+    vertex.sph.assign(0x50, 0);
+    CachedEnv pixel;
+    pixel.stage = 4;
+    pixel.sph.assign(0x50, 0);
+    CachedPipeline v2{.envs = {vertex, pixel}, .key = std::vector<u8>(1056, 0)};
+    const u32 raw1 = 1U << 5;
+    std::memcpy(v2.key.data() + 48, &raw1, 4);
+    v2.key[48 + 8] = 3; // a colour format: the state is not all zero
+    CachedPipeline old_format = v2;
+    const std::array<u32, 2> driver{0x13, 0x6800000};
+    std::memcpy(old_format.key.data() + 48 + 16, driver.data(), 8);
+    REQUIRE(old_format.key != v2.key);
+    REQUIRE(CanonicalKey(old_format) == CanonicalKey(v2));
+    REQUIRE(CanonicalKey(v2)[48 + 8] == 3);
+}
+
+TEST_CASE("Nx2Precompile: the pixel class tells programs that discard apart", "[video_core]") {
+    std::vector<u8> sph(0x50, 0);
+    const u32 omap = 0xF;
+    std::memcpy(sph.data() + 0x48, &omap, 4);
+    const auto writes = PixelClass(sph);
+    const u32 kills_pixels = 1U << 15;
+    std::memcpy(sph.data(), &kills_pixels, 4);
+    const auto discards = PixelClass(sph);
+    REQUIRE(writes != discards);
+    // Other header bits do not change the class.
+    const u32 kills_and_mrt = kills_pixels | (1U << 14);
+    std::memcpy(sph.data(), &kills_and_mrt, 4);
+    REQUIRE(PixelClass(sph) == discards);
+}
+
+TEST_CASE("Nx2Precompile: build takes --states 1 to 16 only", "[video_core]") {
+    const auto run = [](std::vector<std::string> args) {
+        std::vector<char*> argv;
+        for (auto& arg : args) {
+            argv.push_back(arg.data());
+        }
+        return VideoCommon::Nx2Precompile::RunTool(static_cast<int>(argv.size()), argv.data());
+    };
+    // Each is refused while the options are read, before the game is opened.
+    for (const char* states : {"0", "17", "-1", "4x", "abc", "", "4294967297"}) {
+        INFO(states);
+        REQUIRE(run({"nx2-precompile", "build", "--game", "missing.nup", "--out", "out.nx2prep",
+                     "--cache", "missing.bin", "--states", states}) != 0);
+    }
+    // Only build takes it.
+    REQUIRE(run({"nx2-precompile", "scan", "--pkg", "missing", "--out", "out", "--states", "4"}) !=
+            0);
 }

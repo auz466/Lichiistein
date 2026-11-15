@@ -1919,6 +1919,25 @@ u64 CountRecordedPipelines(const std::filesystem::path& cache) {
     return count;
 }
 
+namespace {
+
+/// nx2-precompile build --states: a whole number from 1 to MaxStatesPerPair.
+u32 ParseStates(const std::string& value) {
+    const auto error = [] {
+        return std::runtime_error(fmt::format("--states takes 1 to {}", MaxStatesPerPair));
+    };
+    if (value.empty() || !std::ranges::all_of(value, [](char c) { return c >= '0' && c <= '9'; })) {
+        throw error();
+    }
+    const u64 states = value.size() > 2 ? u64{MaxStatesPerPair} + 1 : std::stoull(value);
+    if (states < 1 || states > MaxStatesPerPair) {
+        throw error();
+    }
+    return static_cast<u32>(states);
+}
+
+} // namespace
+
 int RunTool(int argc, char** argv) {
     try {
         if (argc < 2) {
@@ -1949,15 +1968,14 @@ int RunTool(int argc, char** argv) {
             else if (arg == "--file") check_file = value;
             else if (arg == "--game") game = value;
             else if (arg == "--packages") packages = value;
-            else if (arg == "--states") states = static_cast<u32>(std::stoul(value));
+            else if (arg == "--states" && command == "build")
+                states = ParseStates(value);
             else throw std::runtime_error("Unknown option " + arg);
         }
         if (command == "build") {
             if (game.empty() || out.empty() || caches.empty())
-                throw std::runtime_error(
-                    "build needs --game GAME --out PRECOMPILED --cache CACHE [--cache CACHE ...]");
-            if (states < 1 || states > MaxStatesPerPair)
-                throw std::runtime_error(fmt::format("--states takes 1 to {}", MaxStatesPerPair));
+                throw std::runtime_error("build needs --game GAME --out PRECOMPILED --cache CACHE "
+                                         "[--cache CACHE ...] [--states N]");
             return BuildCommand(game, out, caches, packages, threads, states);
         }
         if (command == "cache-export") {

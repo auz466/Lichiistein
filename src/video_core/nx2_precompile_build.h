@@ -69,6 +69,15 @@ std::vector<CachedPipeline> ParseCacheFile(std::span<const u8> bytes);
 /// GenericEnvironment's native shader hash of lowered code.
 u64 NativeShaderHash(std::span<const u8> code);
 
+/// build_precompiled.py's canonical_key: the record's graphics key with the bytes the pipeline
+/// does not depend on cleared, the driver's id and version included.
+std::vector<u8> CanonicalKey(const CachedPipeline& record);
+
+/// The model's class of a pixel program, from its header (SPH): the render targets it writes and
+/// whether it discards pixels. Programs that discard are drawn with alpha test and blend states of
+/// their own, so a program never recorded takes its render target part from the ones like it.
+std::string PixelClass(std::span<const u8> sph);
+
 /// GraphicsPipelineCacheKey::Hash of a 1056-byte key.
 u64 GraphicsKeyHash(std::span<const u8> key);
 
@@ -154,6 +163,12 @@ struct MeshEnvironments {
 /// the most it takes (nx2-precompile build --states).
 constexpr u32 DefaultStatesPerPair = 4;
 constexpr u32 MaxStatesPerPair = 16;
+
+/// Candidates asked of the model past the k a pair keeps: some are skipped (their hash covers more
+/// than the prefix) or become another candidate's key once made canonical. 2 up to k = 4, then k/2.
+constexpr u32 CandidateSlack(u32 k) {
+    return k / 2 > 2 ? k / 2 : 2;
+}
 
 struct PrecompiledOptions {
     u32 k = DefaultStatesPerPair; ///< predicted render states per vertex/pixel pair

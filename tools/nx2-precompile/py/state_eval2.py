@@ -38,8 +38,7 @@ def pipelines(path):
         if r.is_compute or r.envs[0].stage != 0 or r.envs[-1].stage != 4:
             continue
         vs, fs = info(r.envs[0], True), info(r.envs[-1], False)
-        state = sf.canonical(r.key[48:160], vs['read_mask'])
-        state = state[:16] + bytes(8) + state[24:]  # without the driver, as build_precompiled.py
+        state = sf.canonical(r.key[48:160], vs['read_mask'])  # the driver left out, too
         out[(vs['hash'], fs['hash'], state)] = (vs, fs, state)
     return list(out.values())
 

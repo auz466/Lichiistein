@@ -9,7 +9,7 @@ Records, all with canonical keys (statefields.canonical, as FixedPipelineState::
     compute_states; a compute key holds no render state).
 
 usage: python -I build_precompiled.py --inventory inv.json --envs scan.envs --pairs nx_pairs.json
-           --train a.bin [--train b.bin ...] --k 3 --cache-version N --out precompiled.fork-vN.nx2prep
+           --train a.bin [--train b.bin ...] --k 4 --cache-version N --out precompiled.fork-vN.nx2prep
 """
 import argparse
 import collections
@@ -33,7 +33,15 @@ ap.add_argument('--inventory', required=True)
 ap.add_argument('--envs', required=True)
 ap.add_argument('--pairs', required=True)
 ap.add_argument('--train', action='append', required=True)
-ap.add_argument('--k', type=int, default=3)
+def states_per_pair(value):
+    k = int(value)
+    if not 1 <= k <= 16:
+        raise argparse.ArgumentTypeError('takes 1 to 16')
+    return k
+
+
+# nx2-precompile build --states: DefaultStatesPerPair and MaxStatesPerPair.
+ap.add_argument('--k', type=states_per_pair, default=4)
 ap.add_argument('--out', required=True)
 ap.add_argument('--report')
 ap.add_argument('--mesh-combos', help='(task, mesh, pixel) combinations, mesh_variations.py')
@@ -135,11 +143,7 @@ def canonical_key(rec):
     vertex = next((e for e in rec.envs if e.stage == 0), None)
     mesh = any(e.stage in (7, 8) for e in rec.envs)
     mask = 0 if mesh else (sf.attribute_read_mask(vertex.sph) if vertex else 0xFFFFFFFF)
-    state = sf.canonical(key[48:48 + sf.STATE_LEN], mask)
-    # Keys leave the driver out, as the emulator reads them and as the shader cache v2 records
-    # them: a cache of the format before it holds the driver's id and version, and with them kept
-    # a pipeline recorded in both formats, or before and after a driver update, counts twice.
-    state = state[:16] + bytes(8) + state[24:]
+    state = sf.canonical(key[48:48 + sf.STATE_LEN], mask)  # the driver left out, too
     # Bytes past the prefix are kept where the key's hash covers them (static vertex input, or
     # transform feedback); otherwise they are cleared, as they are not the pipeline's.
     tail = key[48 + sf.STATE_LEN:] if sf.hashes_past_prefix(state) else bytes(STATE_TAIL)
@@ -222,7 +226,8 @@ for vh, fh in sorted(pairs):
         continue
     vs, fs = oracle_info(vh, True), oracle_info(fh, False)
     added = 0
-    for state in model.candidates(vs, fs, args.k + 2):
+    # The spare candidates: as CandidateSlack in nx2_precompile_build.h.
+    for state in model.candidates(vs, fs, args.k + max(2, args.k // 2)):
         # A predicted key holds the 112-byte prefix only: one whose hash covers more (static
         # vertex input, transform feedback) could not match a draw.
         if sf.hashes_past_prefix(state):
@@ -235,6 +240,8 @@ for vh, fh in sorted(pairs):
             counts['predicted graphics'] += 1
         if added >= args.k:
             break
+    if added < args.k:
+        counts['pair short of predicted states'] += 1
 
 if args.mesh_combos and args.mesh_envs:
     # Mesh draws: the mesh model knows the states mesh pipelines were drawn with; the vertex model's
