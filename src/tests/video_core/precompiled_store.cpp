@@ -76,9 +76,9 @@ TEST_CASE("PrecompiledStore: a later open continues with what a run kept", "[vid
         // The same bytes are kept once per kind.
         REQUIRE(store.AddBlob(Kind::Info, 11, Bytes("info")) == info);
         REQUIRE(info != spirv);
-        store.MarkStarted(2);
+        REQUIRE(store.MarkStarted(2));
         store.AddRecord(PreparedRecord(2, info, spirv));
-        store.MarkStarted(0);
+        REQUIRE(store.MarkStarted(0));
         store.MarkAbandoned(0);
 
         std::vector<PrecompiledStore::Blob> blobs;
@@ -205,7 +205,7 @@ TEST_CASE("PrecompiledStore: a record two runs never finished is given up", "[vi
             REQUIRE(loaded.poisoned == 0);
             REQUIRE(loaded.states[1] == State::Pending);
         }
-        store.MarkStarted(1);
+        REQUIRE(store.MarkStarted(1));
         // Ends like a crash: no record, no abandon.
     }
     {
@@ -294,4 +294,51 @@ TEST_CASE("PrecompiledStore: files it cannot read are kept, not started over", "
     REQUIRE(store.Open(dir.Data(), dir.Index(), "stamp", 4, loaded));
     REQUIRE(loaded.resumed);
     REQUIRE(loaded.records.size() == 1);
+}
+
+TEST_CASE("PrecompiledStore: read errors after opening keep the files", "[video_core]") {
+    TempDir dir;
+    {
+        PrecompiledStore store;
+        PrecompiledStore::Loaded loaded;
+        REQUIRE(store.Open(dir.Data(), dir.Index(), "stamp", 4, loaded));
+        REQUIRE(store.AddRecord(PreparedRecord(1, store.AddBlob(Kind::Info, 1, Bytes("info")),
+                                               PrecompiledStore::NoBlob)));
+    }
+    const auto data_size = std::filesystem::file_size(dir.Data());
+    const auto index_size = std::filesystem::file_size(dir.Index());
+    // A directory in a file's place: on Linux it opens for reading and every read fails (EISDIR),
+    // elsewhere it does not open. Either way the other file must stay as it is.
+    for (const auto& file : {dir.Index(), dir.Data()}) {
+        INFO(file.filename().string());
+        const auto aside = dir.path / "aside.bin";
+        std::filesystem::rename(file, aside);
+        std::filesystem::create_directory(file);
+        {
+            PrecompiledStore store;
+            PrecompiledStore::Loaded loaded;
+            REQUIRE_FALSE(store.Open(dir.Data(), dir.Index(), "stamp", 4, loaded));
+            REQUIRE(loaded.records.empty());
+        }
+        REQUIRE(std::filesystem::is_directory(file));
+        std::filesystem::remove(file);
+        std::filesystem::rename(aside, file);
+        REQUIRE(std::filesystem::file_size(dir.Data()) == data_size);
+        REQUIRE(std::filesystem::file_size(dir.Index()) == index_size);
+    }
+    PrecompiledStore store;
+    PrecompiledStore::Loaded loaded;
+    REQUIRE(store.Open(dir.Data(), dir.Index(), "stamp", 4, loaded));
+    REQUIRE(loaded.resumed);
+    REQUIRE(loaded.records.size() == 1);
+}
+
+TEST_CASE("PrecompiledStore: no start marker once the store is closed", "[video_core]") {
+    TempDir dir;
+    PrecompiledStore store;
+    PrecompiledStore::Loaded loaded;
+    REQUIRE(store.Open(dir.Data(), dir.Index(), "stamp", 4, loaded));
+    REQUIRE(store.MarkStarted(0));
+    store.Close();
+    REQUIRE_FALSE(store.MarkStarted(1));
 }

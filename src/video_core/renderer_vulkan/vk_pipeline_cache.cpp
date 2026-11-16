@@ -3047,7 +3047,12 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
                      return {};
                  }
                  const auto& record = prep.records[index];
-                 prep.store.MarkStarted(index);
+                 if (!prep.store.MarkStarted(index)) {
+                     // A build with no marker on disk could crash unnoted; the store failed or
+                     // closed, so the run stops (store_failed).
+                     prep.Release();
+                     return {};
+                 }
                  Common::UniqueFunction<bool> build;
                  try {
                      auto envs = prep.ReadEnvs(record.envs);

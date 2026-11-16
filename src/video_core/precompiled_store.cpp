@@ -43,7 +43,13 @@ std::optional<std::vector<char>> ReadAll(const std::filesystem::path& path) {
         }
         return std::nullopt;
     }
-    std::vector<char> bytes(std::istreambuf_iterator<char>(file), {});
+    std::vector<char> bytes;
+    try {
+        // The iterators read the file buffer directly, which throws on a read error (libstdc++).
+        bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    } catch (const std::ios_base::failure&) {
+        return std::nullopt;
+    }
     if (file.bad()) {
         return std::nullopt;
     }
@@ -121,7 +127,10 @@ PrecompiledStore::ResumeResult PrecompiledStore::Resume(const std::filesystem::p
     std::error_code error;
     const u64 data_size = std::filesystem::file_size(data_path, error);
     if (error) {
-        return ResumeResult::Mismatch;
+        // Only a missing file starts again: one that is there but has no size is kept.
+        std::error_code exists_error;
+        const bool missing = !std::filesystem::exists(data_path, exists_error) && !exists_error;
+        return missing ? ResumeResult::Mismatch : ResumeResult::Failed;
     }
     // The data file's header: its stamp must be this one too.
     {
@@ -133,12 +142,18 @@ PrecompiledStore::ResumeResult PrecompiledStore::Resume(const std::filesystem::p
         u32 stamp_size{};
         file.read(magic.data(), magic.size());
         file.read(reinterpret_cast<char*>(&stamp_size), sizeof(stamp_size));
+        if (file.bad()) {
+            return ResumeResult::Failed; // a read error, not a short or different header
+        }
         if (!file || std::string_view{magic.data(), magic.size()} != DataMagic ||
             stamp_size != stamp.size()) {
             return ResumeResult::Mismatch;
         }
         std::string file_stamp(stamp_size, '\0');
         file.read(file_stamp.data(), stamp_size);
+        if (file.bad()) {
+            return ResumeResult::Failed;
+        }
         if (!file || file_stamp != stamp) {
             return ResumeResult::Mismatch;
         }
@@ -296,10 +311,10 @@ u32 PrecompiledStore::AddBlob(BlobKind kind, u64 hash, std::span<const u8> bytes
     return it->second;
 }
 
-void PrecompiledStore::WriteMarker(EntryType type, u32 record_index) {
+bool PrecompiledStore::WriteMarker(EntryType type, u32 record_index) {
     std::scoped_lock lock{mutex};
     if (!index.is_open()) {
-        return;
+        return false;
     }
     Put(index, static_cast<u8>(type));
     Put(index, std::array<u8, 3>{});
@@ -309,11 +324,13 @@ void PrecompiledStore::WriteMarker(EntryType type, u32 record_index) {
     if (!index) {
         // Failed() stops the preparation: a build without its marker could crash unnoted.
         FailLocked();
+        return false;
     }
+    return true;
 }
 
-void PrecompiledStore::MarkStarted(u32 record_index) {
-    WriteMarker(EntryType::Started, record_index);
+bool PrecompiledStore::MarkStarted(u32 record_index) {
+    return WriteMarker(EntryType::Started, record_index);
 }
 
 void PrecompiledStore::MarkAbandoned(u32 record_index) {

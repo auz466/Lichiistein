@@ -398,14 +398,25 @@ void RemoveShaderPreparation(u64 program_id) {
         return;
     }
     // Each store's lock, held while its files go: another emulator preparing this game has them
-    // open, so they are left alone while it runs.
-    std::vector<std::unique_ptr<Common::FS::FileLock>> locks;
+    // open, so they are left alone while it runs. The lock is beside the index, named from the
+    // data file too: a store being started has its data file before its index.
+    constexpr std::string_view DataPrefix = "precompiled_kept.";
+    constexpr std::string_view IndexPrefix = "precompiled_kept_index.";
+    std::vector<std::filesystem::path> lock_paths;
     for (const auto& file : files) {
-        if (!Common::FS::PathToUTF8String(file.filename()).starts_with("precompiled_kept_index")) {
+        std::string name = Common::FS::PathToUTF8String(file.filename());
+        if (name.starts_with(DataPrefix)) {
+            name = std::string{IndexPrefix} + name.substr(DataPrefix.size());
+        } else if (!name.starts_with(IndexPrefix)) {
             continue;
         }
-        auto lock_path = file;
-        lock_path += ".lock";
+        auto lock_path = file.parent_path() / Common::FS::ToU8String(name + ".lock");
+        if (std::ranges::find(lock_paths, lock_path) == lock_paths.end()) {
+            lock_paths.push_back(std::move(lock_path));
+        }
+    }
+    std::vector<std::unique_ptr<Common::FS::FileLock>> locks;
+    for (const auto& lock_path : lock_paths) {
         auto& lock = locks.emplace_back(std::make_unique<Common::FS::FileLock>(lock_path));
         if (!lock->Held()) {
             QtCommon::Frontend::Warning(

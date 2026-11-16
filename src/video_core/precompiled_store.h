@@ -96,7 +96,8 @@ public:
     u32 AddBlob(BlobKind kind, u64 hash, std::span<const u8> bytes);
 
     /// Notes that a run starts preparing `index`. An open after a crash finds it unfinished.
-    void MarkStarted(u32 index);
+    /// False when the note is not on disk (the store is closed or failed): the build must not run.
+    [[nodiscard]] bool MarkStarted(u32 index);
 
     /// Notes that a run stopped before preparing `index` (cancelled): not a crash.
     void MarkAbandoned(u32 index);
@@ -143,7 +144,7 @@ private:
                         const std::filesystem::path& index_path, std::string_view stamp,
                         u32 record_count, Loaded& loaded);
     void FailLocked();
-    void WriteMarker(EntryType type, u32 index);
+    bool WriteMarker(EntryType type, u32 index);
     void WriteRecordLocked(const Record& record);
 
     mutable std::mutex mutex;
