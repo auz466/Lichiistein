@@ -1107,15 +1107,32 @@ std::vector<LearnedPrior> LearnPriors(std::span<const CachedPipeline> records) {
 // game_tables.py
 
 namespace {
-/// re.sub(r'\d+', '#', name)
-std::string NumbersAsHash(std::string_view name) {
+/// Whether the digits from `begin` to `end` of `name` are a version component: a number between
+/// dots, or a dot and the end (game_tables.py's VERSION).
+bool IsVersionComponent(std::string_view name, size_t begin, size_t end) {
+    return begin > 0 && name[begin - 1] == '.' && (end == name.size() || name[end] == '.');
+}
+
+/// The end of the run of digits that starts at `begin`.
+size_t DigitsEnd(std::string_view name, size_t begin) {
+    while (begin < name.size() && name[begin] >= '0' && name[begin] <= '9') {
+        ++begin;
+    }
+    return begin;
+}
+
+/// VERSION.sub('#', name)
+std::string VersionsAsHash(std::string_view name) {
     std::string out;
     for (size_t i = 0; i < name.size();) {
         if (name[i] >= '0' && name[i] <= '9') {
-            while (i < name.size() && name[i] >= '0' && name[i] <= '9') {
-                ++i;
+            const size_t end = DigitsEnd(name, i);
+            if (IsVersionComponent(name, i, end)) {
+                out += '#';
+            } else {
+                out.append(name.substr(i, end - i));
             }
-            out += '#';
+            i = end;
         } else {
             out += name[i++];
         }
@@ -1123,17 +1140,20 @@ std::string NumbersAsHash(std::string_view name) {
     return out;
 }
 
-/// [int(n) for n in re.findall(r'\d+', name)]
-std::vector<u64> Numbers(std::string_view name) {
+/// [int(n) for n in VERSION.findall(name)]
+std::vector<u64> Versions(std::string_view name) {
     std::vector<u64> out;
     for (size_t i = 0; i < name.size();) {
         if (name[i] >= '0' && name[i] <= '9') {
-            u64 value = 0;
-            while (i < name.size() && name[i] >= '0' && name[i] <= '9') {
-                value = value * 10 + static_cast<u64>(name[i] - '0');
-                ++i;
+            const size_t end = DigitsEnd(name, i);
+            if (IsVersionComponent(name, i, end)) {
+                u64 value = 0;
+                for (size_t j = i; j < end; ++j) {
+                    value = value * 10 + static_cast<u64>(name[j] - '0');
+                }
+                out.push_back(value);
             }
-            out.push_back(value);
+            i = end;
         } else {
             ++i;
         }
@@ -1203,7 +1223,7 @@ GameTables MakeGameTables(std::span<const ExtractedProgram> extracted,
         if (file.find(".bfsha") == std::string::npos) {
             continue;
         }
-        const auto name = NumbersAsHash(file);
+        const auto name = VersionsAsHash(file);
         const auto [it, added] = group_index.try_emplace(name, groups.size());
         if (added) {
             groups.emplace_back(name, std::vector<std::string>{});
@@ -1251,7 +1271,7 @@ GameTables MakeGameTables(std::span<const ExtractedProgram> extracted,
         } else {
             const std::string* newest = &group.front();
             for (const auto& file : group) {
-                if (Numbers(file) > Numbers(*newest)) {
+                if (Versions(file) > Versions(*newest)) {
                     newest = &file;
                 }
             }

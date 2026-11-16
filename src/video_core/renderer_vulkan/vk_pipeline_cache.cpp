@@ -689,6 +689,8 @@ struct PipelineCache::PrecompiledPrep {
     /// submitted yet
     std::vector<u32> order;
     size_t next{};
+    /// Held while the store is open: one emulator at a time writes this title's store
+    std::optional<Common::FS::FileLock> store_lock;
     VideoCommon::PrecompiledStore store;
 
     std::mutex mutex;
@@ -2595,6 +2597,7 @@ void PipelineCache::StopPrecompiledPrep() {
         batch.Wait();
     }
     prep.store.Close();
+    prep.store_lock.reset();
     VideoCommon::ShaderWarm::SetPreparationProgress(0, 0);
 }
 
@@ -2786,6 +2789,14 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     }
 
     const size_t total = records.size();
+    auto store_lock_path = index_path;
+    store_lock_path += ".lock";
+    prep.store_lock.emplace(store_lock_path);
+    if (prep.store_lock->Busy()) {
+        LOG_WARNING(Render_Vulkan, "Precompiled pipelines: another emulator is preparing this "
+                                   "title's pipelines; none prepared or kept for draws this time");
+        return;
+    }
     Store::Loaded loaded;
     if (!prep.store.Open(data_path, index_path, stamp, static_cast<u32>(total), loaded)) {
         return;
@@ -2927,29 +2938,61 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
         prep.Report();
     }
     auto outcome = PrecompiledPrepOutcome::Finished;
+    // The loading screen's Skip, checked while submitting and while waiting for jobs.
+    const auto take_skip = [before_start, &outcome] {
+        if (!before_start) {
+            return false;
+        }
+        using VideoCommon::ShaderWarm::PrepareSkip;
+        const PrepareSkip skip = VideoCommon::ShaderWarm::TakeSkipPreparation();
+        if (skip == PrepareSkip::None) {
+            return false;
+        }
+        outcome = skip == PrepareSkip::Session ? PrecompiledPrepOutcome::SkippedForSession
+                                               : PrecompiledPrepOutcome::Skipped;
+        return true;
+    };
+    // A store that cannot write any more keeps nothing, so the run stops (a later launch
+    // continues from what it noted).
+    const auto store_failed = [&prep, &outcome] {
+        if (!prep.store.Failed()) {
+            return false;
+        }
+        outcome = PrecompiledPrepOutcome::Stopped;
+        return true;
+    };
     while (true) {
         if (stop.stop_requested()) {
             outcome = PrecompiledPrepOutcome::Stopped;
             break;
         }
-        if (before_start) {
-            using VideoCommon::ShaderWarm::PrepareSkip;
-            const PrepareSkip skip = VideoCommon::ShaderWarm::TakeSkipPreparation();
-            if (skip != PrepareSkip::None) {
-                outcome = skip == PrepareSkip::Session ? PrecompiledPrepOutcome::SkippedForSession
-                                                       : PrecompiledPrepOutcome::Skipped;
-                break;
-            }
+        if (take_skip() || store_failed()) {
+            break;
         }
         u32 index{};
+        bool interrupted = false;
         {
             std::unique_lock lock{prep.mutex};
             if (prep.next >= prep.order.size()) {
                 break;
             }
-            // Stopping cancels the jobs, so the slots would never free up.
-            if (!prep.cv.wait(lock, stop, [&] { return prep.in_flight < max_in_flight; })) {
-                outcome = PrecompiledPrepOutcome::Stopped;
+            // Stopping cancels the jobs, so the slots would never free up. The wait wakes now
+            // and then for a Skip or a failed store while every slot is taken.
+            while (!prep.cv.wait_for(lock, stop, std::chrono::milliseconds{100},
+                                     [&] { return prep.in_flight < max_in_flight; })) {
+                if (stop.stop_requested()) {
+                    outcome = PrecompiledPrepOutcome::Stopped;
+                    interrupted = true;
+                    break;
+                }
+                lock.unlock();
+                interrupted = take_skip() || store_failed();
+                lock.lock();
+                if (interrupted) {
+                    break;
+                }
+            }
+            if (interrupted) {
                 break;
             }
             index = prep.order[prep.next++];
@@ -3055,10 +3098,15 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
         return outcome;
     }
     while (!batch.Idle()) {
-        if (stop.stop_requested()) {
+        if (stop.stop_requested() || store_failed()) {
             shader_jobs->Cancel(batch);
             outcome = PrecompiledPrepOutcome::Stopped;
             break;
+        }
+        if (take_skip()) {
+            std::scoped_lock lock{prep.mutex};
+            prep.callback = nullptr;
+            return outcome;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds{100});
     }

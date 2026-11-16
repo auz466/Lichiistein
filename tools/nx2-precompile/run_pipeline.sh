@@ -14,7 +14,7 @@
 #   NX2_OUT      output folder (default ./nx2-precompile-out)
 #   NX2_TOOL     nx2-precompile executable (default: nx2-precompile on PATH)
 #   NX2_K        predicted render states per vertex/pixel pair (default 4)
-#   PYTHON       Python 3.11+ (default python)
+#   PYTHON       Python 3.12+ (default python)
 set -euo pipefail
 
 : "${NX2_GAME:?set NX2_GAME to the game (.nup or an unpacked RomFS folder)}"
@@ -57,7 +57,7 @@ echo "== 2. storage-pointer priors from the recorded caches"
 echo "== 3. oracle accuracy against each recorded cache"
 for cache in "$@"; do
     "$TOOL" validate --pkg "$PROGRAMS" --cache "$cache" --out "$OUT/validate_$(basename "$cache" .bin)" \
-        --priors "$PRIORS" | grep -v differs:
+        --priors "$PRIORS" | awk '!/differs:/'
 done
 
 echo "== 4. every program: lowered, hashed and given oracle facts"

@@ -143,7 +143,7 @@ for working on the predictions:
 1. Build Lichii and the tool with `-DENABLE_DEBUG_TOOLS=ON` (targets `yuzu` and `nx2-precompile`).
    Check `nx2-precompile cache-version` against the Lichii build that will read the file; they must
    match.
-   Install Python 3.11 or newer (no packages needed).
+   Install Python 3.12 or newer (no packages needed).
 2. Play the game in Lichii for a while, with the NVIDIA cache size set as above. Every pipeline the
    game builds is recorded in the title's shader cache, `cache/shader/<title id>/lichii-cache.v2.bin`
    in Lichii's user folder (`vulkan.fork-v<N>.bin` before the shader cache v2). These recorded pipelines are what the tools learn render states and
@@ -180,7 +180,7 @@ for working on the predictions:
 
 `run_pipeline.sh CACHE.bin...` runs the whole chain from the game (`NX2_GAME`, its `.nup`) and the
 disk caches recorded while playing it; see the script's header for the other variables. It needs
-Python 3.11 or newer and nothing else; no keys are needed for a `.nup`. `extract` writes
+Python 3.12 or newer and nothing else; no keys are needed for a `.nup`. `extract` writes
 PREFIX.programs (the programs, for the other commands' `--pkg`), PREFIX.tsv (fingerprint, stage and
 origin of each), PREFIX.variations.tsv (the programs each variation draws together) and
 PREFIX.errors.txt. `--pkg` also takes a folder of nxnative's `BTCD` packages.

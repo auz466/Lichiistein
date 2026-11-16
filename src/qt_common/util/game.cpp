@@ -352,13 +352,36 @@ void RemoveShaderPreparation(u64 program_id) {
         "precompiled_kept", "precompiled_infos", "precompiled_prepared", "precompiled_progress"};
     std::vector<std::filesystem::path> files;
     std::error_code error;
-    for (const auto& entry : std::filesystem::directory_iterator(dir, error)) {
-        const std::string name = Common::FS::PathToUTF8String(entry.path().filename());
-        if (entry.is_regular_file(error) && name.find(".fork-v") != std::string::npos &&
-            std::ranges::any_of(
+    // Non-throwing iteration: a range-for's increment throws, and this runs in a Qt slot.
+    bool listed = true;
+    std::filesystem::directory_iterator it(dir, error);
+    if (error && error != std::errc::no_such_file_or_directory) {
+        listed = false;
+    }
+    for (; !error && it != std::filesystem::directory_iterator{}; it.increment(error)) {
+        const std::string name = Common::FS::PathToUTF8String(it->path().filename());
+        if (name.find(".fork-v") == std::string::npos ||
+            !std::ranges::any_of(
                 Prefixes, [&](std::string_view prefix) { return name.starts_with(prefix); })) {
-            files.push_back(entry.path());
+            continue;
         }
+        std::error_code status_error;
+        const bool regular = it->is_regular_file(status_error);
+        if (status_error) {
+            listed = false;
+            continue;
+        }
+        if (regular) {
+            files.push_back(it->path());
+        }
+    }
+    if (error && error != std::errc::no_such_file_or_directory) {
+        listed = false;
+    }
+    if (!listed) {
+        QtCommon::Frontend::Warning(tr("Error Removing Shader Preparation"),
+                                    tr("Failed to read this game's shader cache directory."));
+        return;
     }
     if (files.empty()) {
         QtCommon::Frontend::Warning(tr("Error Removing Shader Preparation"),

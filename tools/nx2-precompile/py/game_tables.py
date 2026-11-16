@@ -10,9 +10,10 @@ Writes, in OUT_DIR:
 
 Unused shader archive versions: a game may ship older versions of a shader archive beside the one it
 loads (Ocarina of Time: Shader/Model.Product.100 next to Model.Product.110). Archives (.bfsha) whose
-paths differ only in their numbers form a group; with recorded caches (--used), the members none of
-whose programs were ever drawn are left out when another member was; without them, every member but
-the highest-numbered is. Other files (effects named _01, _02 ...) are never grouped.
+paths differ only in their version components (a number between dots, as .100.) form a group; with
+recorded caches (--used), the members none of whose programs were ever drawn are left out when
+another member was; without them, every member but the highest-numbered is. Other numbers (effects
+named Effect_01, Effect_02 ...) do not make a group, and other files are never grouped.
 
 usage: python -I game_tables.py EXTRACT.tsv EXTRACT.variations.tsv SCAN.tsv OUT_DIR [--used CACHE.bin ...]
 """
@@ -26,6 +27,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lichii_cache as lc  # noqa: E402
+
+# A version component of an archive's path: a number between dots (or a dot and the end).
+VERSION = re.compile(r'(?<=\.)\d+(?=\.|$)')
 
 ap = argparse.ArgumentParser()
 ap.add_argument('extract_tsv')
@@ -71,7 +75,7 @@ for file, members in variations:
 groups = collections.defaultdict(set)
 for file in files:
     if '.bfsha' in file:
-        groups[re.sub(r'\d+', '#', file)].add(file)
+        groups[VERSION.sub('#', file)].add(file)
 left_out = set()
 for name, group in groups.items():
     if len(group) < 2:
@@ -86,7 +90,7 @@ for name, group in groups.items():
         dropped = {f for f in group if not counts[f]}
         why = 'none of its own programs drawn, while another version\'s were'
     else:
-        newest = max(group, key=lambda f: [int(n) for n in re.findall(r'\d+', f)])
+        newest = max(group, key=lambda f: [int(n) for n in VERSION.findall(f)])
         dropped = group - {newest}
         why = 'older than ' + newest
     for f in sorted(dropped):

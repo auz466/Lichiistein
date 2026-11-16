@@ -224,3 +224,38 @@ TEST_CASE("PrecompiledStore: a record two runs never finished is given up", "[vi
     REQUIRE(loaded.records.size() == 1);
     REQUIRE(loaded.records[0].failed);
 }
+
+TEST_CASE("PrecompiledStore: files it cannot reopen for writing are kept, not started over",
+          "[video_core]") {
+    TempDir dir;
+    {
+        PrecompiledStore store;
+        PrecompiledStore::Loaded loaded;
+        REQUIRE(store.Open(dir.Data(), dir.Index(), "stamp", 4, loaded));
+        REQUIRE(store.AddRecord(PreparedRecord(1, store.AddBlob(Kind::Info, 1, Bytes("info")),
+                                               PrecompiledStore::NoBlob)));
+    }
+    const auto data_size = std::filesystem::file_size(dir.Data());
+    const auto index_size = std::filesystem::file_size(dir.Index());
+    std::filesystem::permissions(dir.Index(), std::filesystem::perms::owner_read |
+                                                  std::filesystem::perms::group_read |
+                                                  std::filesystem::perms::others_read);
+    if (std::ofstream{dir.Index(), std::ios::binary | std::ios::app}) {
+        SKIP("the index stays writable (running as root?)");
+    }
+    {
+        PrecompiledStore store;
+        PrecompiledStore::Loaded loaded;
+        REQUIRE_FALSE(store.Open(dir.Data(), dir.Index(), "stamp", 4, loaded));
+        REQUIRE(loaded.records.empty());
+    }
+    REQUIRE(std::filesystem::file_size(dir.Data()) == data_size);
+    REQUIRE(std::filesystem::file_size(dir.Index()) == index_size);
+    std::filesystem::permissions(dir.Index(), std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::add);
+    PrecompiledStore store;
+    PrecompiledStore::Loaded loaded;
+    REQUIRE(store.Open(dir.Data(), dir.Index(), "stamp", 4, loaded));
+    REQUIRE(loaded.resumed);
+    REQUIRE(loaded.records.size() == 1);
+}

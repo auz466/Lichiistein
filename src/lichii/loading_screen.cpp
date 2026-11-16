@@ -218,11 +218,18 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
             const auto eta_mseconds =
                 static_cast<long>(static_cast<double>(total - slow_shader_first_value) /
                                   (value - slow_shader_first_value) * diff.count());
+            // Hours are kept: preparing precompiled pipelines can take longer than one.
+            const long eta_seconds =
+                std::max<long>(eta_mseconds - diff.count() + 1000, 1000) / 1000;
+            const QString minutes_seconds =
+                QStringLiteral("%1:%2")
+                    .arg((eta_seconds / 60) % 60, 2, 10, QLatin1Char('0'))
+                    .arg(eta_seconds % 60, 2, 10, QLatin1Char('0'));
             estimate =
                 tr("Estimated Time %1")
-                    .arg(QTime(0, 0, 0, 0)
-                             .addMSecs(std::max<long>(eta_mseconds - diff.count() + 1000, 1000))
-                             .toString(QStringLiteral("mm:ss")));
+                    .arg(eta_seconds >= 3600
+                             ? QStringLiteral("%1:%2").arg(eta_seconds / 3600).arg(minutes_seconds)
+                             : minutes_seconds);
         }
     }
 

@@ -37,6 +37,10 @@ def pipelines(path):
     for r in recs:
         if r.is_compute or r.envs[0].stage != 0 or r.envs[-1].stage != 4:
             continue
+        # As the builder's model: only keys whose hash ends with these 112 bytes (dynamic vertex
+        # input, no transform feedback); without dynamic input they hold the enabled divisors.
+        if sf.hashes_past_prefix(r.key[48:160]):
+            continue
         vs, fs = info(r.envs[0], True), info(r.envs[-1], False)
         state = sf.canonical(r.key[48:160], vs['read_mask'])  # the driver left out, too
         out[(vs['hash'], fs['hash'], state)] = (vs, fs, state)

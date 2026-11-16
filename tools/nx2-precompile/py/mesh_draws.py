@@ -4,7 +4,10 @@ With a task program, INIT's `lines` is the task payload in 128-byte units (contr
 1152 -> 9, 3200 -> 25 in every recorded draw. Without one, INIT keeps what the last task draw set,
 so each of the recorded values is prepared.
 
-usage: python -I mesh_draws.py <pkg dir> <inventory.json> <mesh_combos.json> <out.tsv>
+usage: python -I mesh_draws.py <PREFIX.programs> <inventory.json> <mesh_combos.json> <out.tsv>
+
+PREFIX.programs is nx2-precompile extract's programs file, whose order game_tables.py's
+inventory.json indexes.
 """
 import json
 import os
@@ -17,27 +20,18 @@ where = {}
 for r in inv:
     if r['stage'] == 'Mesh':
         where.setdefault(r['code_hash'], (r['file'], r['index']))
+if not os.path.isfile(pkg):
+    sys.exit(f'{pkg}: not a file; pass nx2-precompile extract\'s PREFIX.programs')
 controls = {}
-if os.path.isfile(pkg):
-    # nx2-precompile extract's PREFIX.programs (see main.cpp Packages::LoadExtracted)
-    d = open(pkg, 'rb').read()
-    count, = struct.unpack_from('<I', d, 8)
-    o = 12
-    for idx in range(count):
-        _, _, cl, kl, ol = struct.unpack_from('<BQIII', d, o)
-        c = o + 21 + ol
-        controls[('programs', idx)] = d[c:c + cl]
-        o = c + cl + kl
-for name in sorted(os.listdir(pkg)) if os.path.isdir(pkg) else ():
-    if not name.startswith('ms_') or name.startswith('._'):
-        continue
-    d = open(os.path.join(pkg, name), 'rb').read()
-    o = idx = 0
-    while o < len(d):
-        cl, kl = struct.unpack_from('<2I', d, o + 0x28)
-        controls[(name, idx)] = d[o + 0x38 + kl:o + 0x38 + kl + cl]
-        o += 0x38 + kl + cl
-        idx += 1
+# nx2-precompile extract's PREFIX.programs (see main.cpp Packages::LoadExtracted)
+d = open(pkg, 'rb').read()
+count, = struct.unpack_from('<I', d, 8)
+o = 12
+for idx in range(count):
+    _, _, cl, kl, ol = struct.unpack_from('<BQIII', d, o)
+    c = o + 21 + ol
+    controls[('programs', idx)] = d[c:c + cl]
+    o = c + cl + kl
 draws = set()
 for task, mesh, pixel in json.load(open(combos_path)):
     ctl = controls[where[mesh]]

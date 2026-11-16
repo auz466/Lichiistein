@@ -140,6 +140,27 @@ TEST_CASE("Nx2Precompile: older shader archive versions nobody drew are left out
     REQUIRE_FALSE(unplayed.rows[3].left_out);
 }
 
+TEST_CASE("Nx2Precompile: numbered archives that are not versions are all kept", "[video_core]") {
+    // Effect_01 and Effect_02 are two archives, not two versions of one: neither is left out,
+    // drawn or not.
+    const std::vector<ExtractedProgram> programs{
+        {.fingerprint = 10, .origin = "/Shader/Effect_01.bfsha#BNSH@0x0#var0"},
+        {.fingerprint = 20, .origin = "/Shader/Effect_02.bfsha#BNSH@0x0#var0"},
+    };
+    const std::vector<ExtractedVariation> variations{
+        {.label = "/Shader/Effect_01.bfsha#var0", .programs = {0}},
+        {.label = "/Shader/Effect_02.bfsha#var0", .programs = {1}},
+    };
+    const std::vector<ScannedProgram> scanned{
+        {.stage = "VertexB", .status = "ok", .code_hash = 0xA0},
+        {.stage = "VertexB", .status = "ok", .code_hash = 0xB0},
+    };
+    const auto tables = MakeGameTables(programs, variations, scanned, {});
+    REQUIRE(tables.left_out_files.empty());
+    REQUIRE_FALSE(tables.rows[0].left_out);
+    REQUIRE_FALSE(tables.rows[1].left_out);
+}
+
 TEST_CASE("Nx2Precompile: graphics key hashes cover the state the key's flags name",
           "[video_core]") {
     std::vector<u8> key(1056, 0);

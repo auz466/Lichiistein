@@ -3522,7 +3522,8 @@ bool MainWindow::BuildPrecompiledFromPlay(u64 program_id, const std::string& gam
                 return {report, "no shaders were found in the game's files"};
             }
             building = true;
-            const unsigned threads = std::max(1U, std::thread::hardware_concurrency() - 1);
+            const unsigned hardware_threads = std::thread::hardware_concurrency();
+            const unsigned threads = hardware_threads > 1 ? hardware_threads - 1 : 1;
             if (!Common::FS::CreateDirs(out.parent_path())) {
                 return {report, "could not create the shader folder"};
             }
@@ -3649,6 +3650,10 @@ void MainWindow::OfferPrecompiledBuild(u64 title_id, const std::string& game_pat
         }
         break;
     case PlayBuildState::Kind::Declined:
+        // A file that appeared after the declined offer came from elsewhere: leave it alone.
+        if (have_file) {
+            return;
+        }
         wanted = state.recorded + PlayBuildFirstThreshold;
         break;
     }

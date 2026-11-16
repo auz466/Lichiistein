@@ -85,7 +85,8 @@ public:
 
     /// Opens the files for `stamp` and a precompiled file of `record_count` records, reading
     /// what an earlier run with the same stamp kept into `loaded`, or starting them empty.
-    /// Returns false when they cannot be written; `loaded` is then empty.
+    /// Returns false when they cannot be written; `loaded` is then empty. Files that hold this
+    /// stamp's work but cannot be reopened for writing are left as they are, not started over.
     bool Open(const std::filesystem::path& data_path, const std::filesystem::path& index_path,
               std::string_view stamp, u32 record_count, Loaded& loaded);
 
@@ -101,8 +102,12 @@ public:
     void MarkAbandoned(u32 index);
 
     /// Notes a prepared record, after flushing the blobs it names. It is also queued for
-    /// TakePublished.
-    void AddRecord(const Record& record);
+    /// TakePublished. Returns false when the store could not write it or an earlier write; the
+    /// store is then closed and nothing more is published.
+    bool AddRecord(const Record& record);
+
+    /// True after a write failed (the store is closed).
+    bool Failed() const;
 
     /// The records added since the last call, and the blobs added since `known_blobs` (the
     /// count the caller already has), for the reader that draws with them.
@@ -128,12 +133,21 @@ private:
 
     bool Start(const std::filesystem::path& data_path, const std::filesystem::path& index_path,
                std::string_view stamp, u32 record_count);
-    bool Resume(const std::filesystem::path& data_path, const std::filesystem::path& index_path,
-                std::string_view stamp, u32 record_count, Loaded& loaded);
+    enum class ResumeResult : u8 {
+        Resumed,
+        Mismatch, ///< Missing, damaged, or another stamp's: started over
+        Failed,   ///< This stamp's files, but they cannot be reopened for writing: kept as is
+    };
+
+    ResumeResult Resume(const std::filesystem::path& data_path,
+                        const std::filesystem::path& index_path, std::string_view stamp,
+                        u32 record_count, Loaded& loaded);
+    void FailLocked();
     void WriteMarker(EntryType type, u32 index);
     void WriteRecordLocked(const Record& record);
 
     mutable std::mutex mutex;
+    bool failed{};
     std::ofstream data;
     std::ofstream index;
     u64 data_offset{};

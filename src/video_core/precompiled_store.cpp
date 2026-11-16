@@ -52,8 +52,17 @@ bool PrecompiledStore::Open(const std::filesystem::path& data_path,
     std::scoped_lock lock{mutex};
     loaded = {};
     loaded.states.assign(record_count, RecordState::Pending);
-    if (Resume(data_path, index_path, stamp, record_count, loaded)) {
+    failed = false;
+    switch (Resume(data_path, index_path, stamp, record_count, loaded)) {
+    case ResumeResult::Resumed:
         return true;
+    case ResumeResult::Failed:
+        LOG_ERROR(Render, "Precompiled pipelines: cannot write {} or {}; kept as they are",
+                  data_path.string(), index_path.string());
+        loaded = {};
+        return false;
+    case ResumeResult::Mismatch:
+        break;
     }
     loaded = {};
     loaded.states.assign(record_count, RecordState::Pending);
@@ -95,13 +104,14 @@ bool PrecompiledStore::Start(const std::filesystem::path& data_path,
     return static_cast<bool>(data) && static_cast<bool>(index);
 }
 
-bool PrecompiledStore::Resume(const std::filesystem::path& data_path,
-                              const std::filesystem::path& index_path, std::string_view stamp,
-                              u32 record_count, Loaded& loaded) {
+PrecompiledStore::ResumeResult PrecompiledStore::Resume(const std::filesystem::path& data_path,
+                                                        const std::filesystem::path& index_path,
+                                                        std::string_view stamp, u32 record_count,
+                                                        Loaded& loaded) {
     std::error_code error;
     const u64 data_size = std::filesystem::file_size(data_path, error);
     if (error) {
-        return false;
+        return ResumeResult::Mismatch;
     }
     // The data file's header: its stamp must be this one too.
     {
@@ -112,12 +122,12 @@ bool PrecompiledStore::Resume(const std::filesystem::path& data_path,
         file.read(reinterpret_cast<char*>(&stamp_size), sizeof(stamp_size));
         if (!file || std::string_view{magic.data(), magic.size()} != DataMagic ||
             stamp_size != stamp.size()) {
-            return false;
+            return ResumeResult::Mismatch;
         }
         std::string file_stamp(stamp_size, '\0');
         file.read(file_stamp.data(), stamp_size);
         if (!file || file_stamp != stamp) {
-            return false;
+            return ResumeResult::Mismatch;
         }
     }
     const u64 data_begin = DataMagic.size() + sizeof(u32) + stamp.size();
@@ -128,7 +138,7 @@ bool PrecompiledStore::Resume(const std::filesystem::path& data_path,
         Get<u32>(bytes, 8) != IndexVersion || Get<u32>(bytes, 12) != record_count ||
         Get<u32>(bytes, 16) != stamp.size() ||
         std::string_view{bytes.data() + 20, stamp.size()} != stamp) {
-        return false;
+        return ResumeResult::Mismatch;
     }
 
     std::vector<Blob> read_blobs;
@@ -208,14 +218,14 @@ bool PrecompiledStore::Resume(const std::filesystem::path& data_path,
     // What follows the last entry read goes, so new entries follow it.
     std::filesystem::resize_file(index_path, offset, error);
     if (error) {
-        return false;
+        return ResumeResult::Failed;
     }
     data.open(data_path, std::ios::binary | std::ios::app);
     index.open(index_path, std::ios::binary | std::ios::app);
     if (!data || !index) {
         data.close();
         index.close();
-        return false;
+        return ResumeResult::Failed;
     }
     data_offset = data_size;
     blobs = read_blobs;
@@ -246,7 +256,11 @@ bool PrecompiledStore::Resume(const std::filesystem::path& data_path,
     loaded.blobs = std::move(read_blobs);
     loaded.records = std::move(records);
     loaded.resumed = true;
-    return static_cast<bool>(index);
+    if (!index) {
+        FailLocked();
+        return ResumeResult::Failed;
+    }
+    return ResumeResult::Resumed;
 }
 
 u32 PrecompiledStore::AddBlob(BlobKind kind, u64 hash, std::span<const u8> bytes) {
@@ -298,13 +312,31 @@ void PrecompiledStore::WriteRecordLocked(const Record& record) {
     Put(index, record.spirv);
 }
 
-void PrecompiledStore::AddRecord(const Record& record) {
+void PrecompiledStore::FailLocked() {
+    // What was noted before stays published: its entries and blobs are on disk.
+    failed = true;
+    data.close();
+    index.close();
+}
+
+bool PrecompiledStore::Failed() const {
+    std::scoped_lock lock{mutex};
+    return failed;
+}
+
+bool PrecompiledStore::AddRecord(const Record& record) {
     std::scoped_lock lock{mutex};
     if (!index.is_open()) {
-        return;
+        return false;
     }
-    // The blobs reach the file before the entries that name them.
+    // The blobs reach the file before the entries that name them; a record whose blobs did not
+    // is not noted or published.
     data.flush();
+    if (!data) {
+        LOG_ERROR(Render, "Precompiled pipelines: writing the kept data failed; stopping");
+        FailLocked();
+        return false;
+    }
     for (; indexed_blobs < blobs.size(); ++indexed_blobs) {
         const Blob& blob = blobs[indexed_blobs];
         Put(index, static_cast<u8>(EntryType::Blob));
@@ -316,7 +348,13 @@ void PrecompiledStore::AddRecord(const Record& record) {
     }
     WriteRecordLocked(record);
     index.flush();
+    if (!index) {
+        LOG_ERROR(Render, "Precompiled pipelines: writing the kept index failed; stopping");
+        FailLocked();
+        return false;
+    }
     published.push_back(record);
+    return true;
 }
 
 void PrecompiledStore::TakePublished(size_t known_blobs, std::vector<Blob>& new_blobs,

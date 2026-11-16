@@ -68,6 +68,19 @@ for line in open(log_path, encoding='utf-8', errors='replace'):
 STAGE = {0: 'VertexB', 4: 'Fragment', 5: 'Compute', 7: 'Task', 8: 'Mesh'}
 
 
+def canonical_key(rec):
+    """The key as build_precompiled.py writes it (its canonical_key): a cache of the format before
+    v2 keeps the driver and bytes past the hashed state, which the precompiled file's keys do not."""
+    key = rec.key
+    vertex = next((e for e in rec.envs if e.stage == 0), None)
+    mesh = any(e.stage in (7, 8) for e in rec.envs)
+    mask = 0 if mesh else (sf.attribute_read_mask(vertex.sph) if vertex else 0xFFFFFFFF)
+    end = 48 + sf.STATE_LEN
+    state = sf.canonical(key[48:end], mask)
+    tail = key[end:] if sf.hashes_past_prefix(state) else bytes(len(key) - end)
+    return key[:48] + state + tail
+
+
 def part_diff(state, candidates):
     """Which state parts differ from the closest precompiled state of the same pair."""
     v, f, s = sf.split(state)
@@ -113,9 +126,11 @@ for rec in recs:
               'compute: shader not in game files' if not all(known) else 'compute: not prepared'
         detail = ''
     else:
+        # The raw key's hash is what the log names; the canonical one is what the file holds.
         key_hash = lc.graphics_key_hash(rec.key)
+        canonical = canonical_key(rec)
         mesh = any(e.stage in (7, 8) for e in rec.envs)
-        prepared = key_hash in prep_graphics
+        prepared = lc.graphics_key_hash(canonical) in prep_graphics
         if prepared:
             why = 'prepared, but facts differ (SPIR-V)' if 'spirv-differs' in agree else 'prepared (driver hit expected)'
             detail = ''
@@ -129,7 +144,7 @@ for rec in recs:
                 why, detail = 'shader pair not listed', ''
             else:
                 why = 'state not among predictions'
-                detail = part_diff(rec.key[48:160], prep_states.get((vh, fh), ()))
+                detail = part_diff(canonical[48:160], prep_states.get((vh, fh), ()))
     ms = times.get(key_hash) if key_hash is not None else None
     rows.append(dict(index=rec.index, why=why, detail=detail, stages=stages, hashes=hashes,
                      spirv=agree, ms=ms, key=('%016x' % key_hash) if key_hash else None))
