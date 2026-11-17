@@ -345,11 +345,40 @@ size_t GenericEnvironment::ReadSizeBytes() const noexcept {
 }
 
 bool GenericEnvironment::CanBeSerialized() const noexcept {
-    // The read properties and the null texture marker are two more constant buffer values.
+    // The read properties, the null texture marker and the handle word markers are more constant
+    // buffer values.
     return !has_unbound_instructions &&
-           std::max({texture_types.size(), texture_pixel_formats.size(), cbuf_values.size() + 2,
+           std::max({texture_types.size(), texture_pixel_formats.size(),
+                     cbuf_values.size() + 2 + HandleOnlyWords().size(),
                      storage_pointer_types.size(), cbuf_replacements.size()}) <=
                MAX_RECORDED_VALUES;
+}
+
+u32 GenericEnvironment::ReadCbufHandleWord(u32 cbuf_index, u32 cbuf_offset) {
+    reading_handle_word = true;
+    const u32 value = ReadCbufValue(cbuf_index, cbuf_offset);
+    reading_handle_word = false;
+    return value;
+}
+
+void GenericEnvironment::RecordCbufValue(u32 index, u32 offset, u32 value) {
+    const u64 key = MakeCbufKey(index, offset);
+    cbuf_values.emplace(key, value);
+    cbuf_reads[key] |= reading_handle_word ? CbufReadHandle : CbufReadValue;
+}
+
+std::vector<u64> GenericEnvironment::HandleOnlyWords() const {
+    std::vector<u64> markers;
+    for (const auto& [key, reads] : cbuf_reads) {
+        if (reads != CbufReadHandle) {
+            continue;
+        }
+        if (const auto marker =
+                CbufHandleWordKey(static_cast<u32>(key >> 32), static_cast<u32>(key))) {
+            markers.push_back(*marker);
+        }
+    }
+    return markers;
 }
 
 bool GenericEnvironment::HasNativeInstructions() const {
@@ -375,7 +404,8 @@ void GenericEnvironment::Serialize(std::ostream& file, u32 read_properties) cons
     const u64 code_size{static_cast<u64>(CachedSizeBytes())};
     const u64 num_texture_types{static_cast<u64>(texture_types.size())};
     const u64 num_texture_pixel_formats{static_cast<u64>(texture_pixel_formats.size())};
-    const u64 num_cbuf_values{static_cast<u64>(cbuf_values.size()) + 2};
+    const std::vector<u64> handle_words{HandleOnlyWords()};
+    const u64 num_cbuf_values{static_cast<u64>(cbuf_values.size()) + 2 + handle_words.size()};
     const u64 num_storage_pointer_types{static_cast<u64>(storage_pointer_types.size())};
     const u64 num_cbuf_replacement_values{static_cast<u64>(cbuf_replacements.size())};
 
@@ -414,6 +444,11 @@ void GenericEnvironment::Serialize(std::ostream& file, u32 read_properties) cons
         .write(reinterpret_cast<const char*>(&read_properties), sizeof(read_properties))
         .write(reinterpret_cast<const char*>(&NULL_TEXTURE_2D_KEY), sizeof(NULL_TEXTURE_2D_KEY))
         .write(reinterpret_cast<const char*>(&null_texture_2d), sizeof(null_texture_2d));
+    for (const u64 marker : handle_words) {
+        constexpr u32 unused{};
+        file.write(reinterpret_cast<const char*>(&marker), sizeof(marker))
+            .write(reinterpret_cast<const char*>(&unused), sizeof(unused));
+    }
     for (const auto& [key, type] : storage_pointer_types) {
         file.write(reinterpret_cast<const char*>(&key), sizeof(key))
             .write(reinterpret_cast<const char*>(&type), sizeof(type));
@@ -1009,7 +1044,7 @@ u32 GraphicsEnvironment::ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) {
     if (cbuf_offset < cbuf.size) {
         value = gpu_memory->Read<u32>(cbuf.address + cbuf_offset);
     }
-    cbuf_values.emplace(MakeCbufKey(cbuf_index, cbuf_offset), value);
+    RecordCbufValue(cbuf_index, cbuf_offset, value);
     return value;
 }
 
@@ -1120,7 +1155,7 @@ u32 ComputeEnvironment::ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) {
     if (cbuf_offset < cbuf.size) {
         value = gpu_memory->Read<u32>(cbuf.Address() + cbuf_offset);
     }
-    cbuf_values.emplace(MakeCbufKey(cbuf_index, cbuf_offset), value);
+    RecordCbufValue(cbuf_index, cbuf_offset, value);
     return value;
 }
 
@@ -1260,6 +1295,10 @@ void FileEnvironment::Deserialize(std::istream& file, std::streampos end) {
         u32 value;
         file.read(reinterpret_cast<char*>(&key), sizeof(key))
             .read(reinterpret_cast<char*>(&value), sizeof(value));
+        if (const auto word = CbufHandleWordFromKey(key)) {
+            cbuf_handle_words.emplace(*word, u8{1});
+            continue;
+        }
         cbuf_values.emplace(key, value);
     }
     if (const auto it{cbuf_values.find(READ_PROPERTIES_KEY)}; it != cbuf_values.end()) {
@@ -1321,7 +1360,8 @@ size_t FileEnvironment::MemorySize() const {
     };
     return sizeof(*this) + code.capacity() * sizeof(u64) + map_bytes(texture_types) +
            map_bytes(texture_pixel_formats) + map_bytes(cbuf_values) +
-           map_bytes(storage_pointer_types) + map_bytes(cbuf_replacements);
+           map_bytes(storage_pointer_types) + map_bytes(cbuf_replacements) +
+           map_bytes(cbuf_handle_words);
 }
 
 namespace {
@@ -1381,9 +1421,14 @@ bool FileEnvironment::AnswersHoldFor(Shader::Environment& live, const char** why
     for (const auto& [key, value] : cbuf_values) {
         const u32 index = static_cast<u32>(key >> 32);
         const u32 offset = static_cast<u32>(key);
-        const u32 live_value = live.ReadCbufValue(index, offset);
-        const auto type = texture_types.find(value);
-        const auto format = texture_pixel_formats.find(value);
+        // Only words the record marks were read as handles alone: a value that merely equals a
+        // handle may have been folded into the code (driver constants, branch tables).
+        const bool handle_word = cbuf_handle_words.contains(key);
+        const u32 live_value = handle_word ? live.ReadCbufHandleWord(index, offset)
+                                           : live.ReadCbufValue(index, offset);
+        const auto type = handle_word ? texture_types.find(value) : texture_types.end();
+        const auto format =
+            handle_word ? texture_pixel_formats.find(value) : texture_pixel_formats.end();
         if (type != texture_types.end() || format != texture_pixel_formats.end()) {
             // A texture handle. Asked of `live` even when it is the same value, so `live` holds
             // the answers its translation would have asked for (it is what the disk cache keeps).

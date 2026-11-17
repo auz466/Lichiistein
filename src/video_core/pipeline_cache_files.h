@@ -39,6 +39,29 @@ inline constexpr std::array<char, 8> PipelineCacheMagic{'y', 'u', 'z', 'u', 'c',
 inline constexpr std::array<char, 8> VulkanDriverPipelineCacheMagic{'y', 'u', 'z', 'u',
                                                                     'v', 'k', 'c', 'h'};
 
+/// A record's constant buffer values may hold markers of the words translation read only as
+/// texture handles (GenericEnvironment notes them), so that a precompiled pipeline's check knows
+/// which of its words' values need not be the same. They are values at a bank no constant buffer
+/// has (as the read properties at offset 0 and the null texture marker at 1), which older builds
+/// load as values translation never reads; records without them hold no such word.
+inline constexpr u32 CbufHandleWordMark = 0x80000000;
+
+/// The marker key of the word at (`index`, `offset`), or nothing for one out of its range.
+[[nodiscard]] constexpr std::optional<u64> CbufHandleWordKey(u32 index, u32 offset) {
+    if (index >= 0x8000 || offset >= 0x10000) {
+        return std::nullopt;
+    }
+    return (u64{~0U} << 32) | CbufHandleWordMark | (index << 16) | offset;
+}
+
+/// The key of the word a marker key names, or nothing for another key.
+[[nodiscard]] constexpr std::optional<u64> CbufHandleWordFromKey(u64 key) {
+    if ((key >> 32) != ~0U || (key & CbufHandleWordMark) == 0) {
+        return std::nullopt;
+    }
+    return (u64{(key >> 16) & 0x7fff} << 32) | (key & 0xffff);
+}
+
 /// Whether `versions` are all below `version` and strictly decreasing. An empty list is valid.
 [[nodiscard]] constexpr bool IsOlderVersionList(std::span<const u32> versions, u32 version) {
     u32 newer = version;

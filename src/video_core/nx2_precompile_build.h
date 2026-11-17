@@ -179,7 +179,8 @@ struct PrecompiledOptions {
 /// build_precompiled.py's counts, in the order it reports them.
 using PrecompiledCounts = std::vector<std::pair<std::string, u64>>;
 
-/// build_precompiled.py: writes the precompiled file (NX2PREP1) to `out`, through `out`.partial.
+/// build_precompiled.py: writes the precompiled file (NX2PREP1) to `out`, through a partial file
+/// beside it named per build.
 /// `oracle` holds each lowered code's first oracle environment (nx2-precompile scan), by shader
 /// hash. Returns the counts. Throws std::runtime_error.
 PrecompiledCounts WritePrecompiled(const std::filesystem::path& out, const GameTables& tables,

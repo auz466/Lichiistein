@@ -397,8 +397,15 @@ public:
         pointers.emplace(key, answer);
         return answer != 0;
     }
+    u32 ReadCbufHandleWord(u32 bank, u32 offset) override {
+        reading_handle = true;
+        const u32 value = ReadCbufValue(bank, offset);
+        reading_handle = false;
+        return value;
+    }
     u32 ReadCbufValue(u32 bank, u32 offset) override {
         const u64 key = CbufKey(bank, offset);
+        cbuf_reads[key] |= reading_handle ? 2 : 1;
         if (const auto it = cbuf_values.find(key); it != cbuf_values.end())
             return it->second;
         u32 value = 0;
@@ -482,7 +489,18 @@ public:
         put(code_size);
         put(static_cast<u64>(texture_types.size()));
         put(static_cast<u64>(texture_formats.size()));
-        put(static_cast<u64>(cbuf_values.size()));
+        // Words read only as texture handles, marked as GenericEnvironment::Serialize marks them
+        std::vector<u64> handle_words;
+        for (const auto& [key, reads] : cbuf_reads) {
+            if (reads != 2) {
+                continue;
+            }
+            if (const auto marker = VideoCommon::CbufHandleWordKey(static_cast<u32>(key >> 32),
+                                                                   static_cast<u32>(key))) {
+                handle_words.push_back(*marker);
+            }
+        }
+        put(static_cast<u64>(cbuf_values.size() + handle_words.size()));
         put(static_cast<u64>(pointers.size()));
         put(u64{0}); // cbuf replacements
         put(local_memory);
@@ -505,6 +523,10 @@ public:
         for (const auto& [key, value] : cbuf_values) {
             put(key);
             put(value);
+        }
+        for (const u64 marker : handle_words) {
+            put(marker);
+            put(u32{0});
         }
         for (const auto& [key, value] : pointers) {
             put(key);
@@ -538,6 +560,8 @@ public:
     std::map<u64, Shader::TextureType> slot_types;
 
 private:
+    std::map<u64, u8> cbuf_reads; ///< 1 read as a value, 2 as a texture handle word
+    bool reading_handle{};
     std::unordered_map<u32, u64> token_slot;
     const PackageProgram& program;
     const Priors& priors;

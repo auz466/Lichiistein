@@ -3591,6 +3591,13 @@ constexpr u64 PlayBuildFirstThreshold = 1000;
 bool MainWindow::BuildPrecompiledFromPlay(u64 program_id, const std::string& game_path,
                                           bool at_launch) {
     const QString title = tr("Build Precompiled Shaders");
+    // A cancelled build's dialog closes before its worker stops, and both would write the file.
+    if (is_precompiled_build_active) {
+        QMessageBox::information(this, title,
+                                 tr("A precompiled shader build is still running. Try again "
+                                    "once it has finished."));
+        return false;
+    }
     const auto cache = TitleShaderDir(program_id) / "lichii-cache.v2.bin";
     u64 recorded = 0;
     try {
@@ -3634,6 +3641,11 @@ bool MainWindow::BuildPrecompiledFromPlay(u64 program_id, const std::string& gam
     std::atomic<bool> building{false};
     const auto out = PrecompiledFilePath(program_id);
     const auto begin = std::chrono::steady_clock::now();
+    // Declared before the job, so it clears only once the job's future has waited for the worker.
+    is_precompiled_build_active = true;
+    SCOPE_EXIT {
+        is_precompiled_build_active = false;
+    };
     auto job = std::async(std::launch::async, [&]() -> std::pair<Precompile::BuildReport, std::string> {
         Precompile::BuildReport report;
         try {
@@ -3746,7 +3758,8 @@ void MainWindow::OnGameListBuildPrecompiledFromPlay(u64 program_id, const std::s
 /// build its precompiled file from them, and again when much more has been recorded since. Not
 /// for a game whose precompiled file came from elsewhere (the nx2-precompile tool).
 void MainWindow::OfferPrecompiledBuild(u64 title_id, const std::string& game_path) {
-    if (title_id == 0 || !Settings::values.use_disk_shader_cache.GetValue() ||
+    if (title_id == 0 || is_precompiled_build_active ||
+        !Settings::values.use_disk_shader_cache.GetValue() ||
         Settings::values.precompiled_prepare.GetValue() == Settings::PrecompiledPrepare::Never) {
         return;
     }

@@ -640,6 +640,16 @@ size_t GetTotalPipelineWorkers() {
 #endif
 }
 
+/// Closes `file` without throwing: closing a stream that is not open sets failbit, which its
+/// exception mask (set when it was opened) would turn into an exception.
+void CloseQuietly(std::ifstream& file) {
+    file.exceptions(std::ios::goodbit);
+    if (file.is_open()) {
+        file.close();
+    }
+    file.clear();
+}
+
 } // Anonymous namespace
 
 struct PipelineCache::GraphicsStages {
@@ -2672,8 +2682,8 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     // A load before this one may still prepare, and its draws read its files.
     StopPrecompiledPrep();
     precompiled_prep.reset();
-    precompiled_file.close();
-    precompiled_infos_file.close();
+    CloseQuietly(precompiled_file);
+    CloseQuietly(precompiled_infos_file);
     kept_infos_generation.fetch_add(1, std::memory_order_acq_rel);
     precompiled_records.clear();
     precompiled_compute_records.clear();
@@ -3226,8 +3236,8 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreatePrecompiledGraphicsPipeli
         }
     } catch (const std::exception&) {
         CountPrecompiledReason("files unreadable");
-        precompiled_file.close();
-        precompiled_infos_file.close();
+        CloseQuietly(precompiled_file);
+        CloseQuietly(precompiled_infos_file);
         return nullptr;
     }
     // The pixel format traits the translation used: integer formats always (sampled textures),
@@ -3403,8 +3413,8 @@ ComputePipelineCacheEntry PipelineCache::CreatePrecompiledComputePipeline(
             }
         } catch (const std::exception&) {
             CountPrecompiledReason("files unreadable");
-            precompiled_file.close();
-            precompiled_infos_file.close();
+            CloseQuietly(precompiled_file);
+            CloseQuietly(precompiled_infos_file);
             return {};
         }
         u32 format_traits = FileEnvironment::FormatTraitInteger;

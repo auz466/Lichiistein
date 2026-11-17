@@ -705,6 +705,9 @@ private:
     // True if TAS recording dialog is visible
     bool is_tas_recording_dialog_active{};
 
+    // True while a precompiled shader build's worker runs (a cancelled one included)
+    bool is_precompiled_build_active{};
+
 #ifdef __unix__
     QSocketNotifier* sig_interrupt_notifier;
     static std::array<int, 3> sig_interrupt_fds;

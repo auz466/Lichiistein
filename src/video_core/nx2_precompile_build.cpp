@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
-#include <type_traits>
 #include <cstring>
 #include <fstream>
 #include <set>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -568,22 +570,32 @@ public:
             Put(index, static_cast<u64>(blob->size()));
             offset += blob->size();
         }
+        // Named per build, so two builds of the same file never write one partial file.
+        static std::atomic<u64> partial_count{};
         auto partial = path;
-        partial += ".partial";
-        {
-            std::ofstream file(partial, std::ios::binary | std::ios::trunc);
-            file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
-            const auto write = [&file](const void* data, size_t size) {
-                file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-            };
-            write(head.data(), head.size());
-            write(index.data(), index.size());
-            write(body.data(), body.size());
-            for (const auto* const blob : envs) {
-                write(blob->data(), blob->size());
+        partial += fmt::format(".{:x}-{}.partial",
+                               std::chrono::steady_clock::now().time_since_epoch().count(),
+                               partial_count.fetch_add(1, std::memory_order_relaxed));
+        try {
+            {
+                std::ofstream file(partial, std::ios::binary | std::ios::trunc);
+                file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+                const auto write = [&file](const void* data, size_t size) {
+                    file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+                };
+                write(head.data(), head.size());
+                write(index.data(), index.size());
+                write(body.data(), body.size());
+                for (const auto* const blob : envs) {
+                    write(blob->data(), blob->size());
+                }
             }
+            std::filesystem::rename(partial, path);
+        } catch (...) {
+            std::error_code ignored;
+            std::filesystem::remove(partial, ignored);
+            throw;
         }
-        std::filesystem::rename(partial, path);
     }
 
 private:
