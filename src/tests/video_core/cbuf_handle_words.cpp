@@ -56,14 +56,22 @@ private:
     std::map<u32, Shader::TextureType> textures;
 };
 
-VideoCommon::FileEnvironment Record(WordEnvironment& env) {
-    std::stringstream stream;
-    env.Serialize(stream, 0);
-    const auto end = stream.tellp();
-    stream.seekg(0);
+VideoCommon::FileEnvironment Load(std::string bytes) {
+    std::stringstream stream{std::move(bytes)};
+    const auto end = static_cast<std::streamoff>(stream.str().size());
     VideoCommon::FileEnvironment file;
     file.Deserialize(stream, end);
     return file;
+}
+
+std::string Serialized(WordEnvironment& env) {
+    std::stringstream stream;
+    env.Serialize(stream, 0);
+    return stream.str();
+}
+
+VideoCommon::FileEnvironment Record(WordEnvironment& env) {
+    return Load(Serialized(env));
 }
 
 constexpr auto Color2D = Shader::TextureType::Color2D;
@@ -76,6 +84,12 @@ TEST_CASE("Handle word marker keys", "[video_core]") {
     REQUIRE(key.has_value());
     REQUIRE(VideoCommon::CbufHandleWordFromKey(*key) == ((u64{17} << 32) | 0xfffc));
     REQUIRE(!VideoCommon::CbufHandleWordKey(0, 0x10000).has_value());
+    REQUIRE(!VideoCommon::CbufHandleWordKey(0x4000, 0).has_value());
+    // A marker of the retired layout names no word.
+    const u64 retired = *key & ~u64{0x40000000};
+    REQUIRE(VideoCommon::IsRetiredCbufHandleWordKey(retired));
+    REQUIRE(!VideoCommon::CbufHandleWordFromKey(retired).has_value());
+    REQUIRE(!VideoCommon::IsRetiredCbufHandleWordKey(*key));
     // The read properties and the null texture marker are no handle words.
     REQUIRE(!VideoCommon::CbufHandleWordFromKey(u64{~0U} << 32).has_value());
     REQUIRE(!VideoCommon::CbufHandleWordFromKey((u64{~0U} << 32) | 1).has_value());
@@ -119,6 +133,53 @@ TEST_CASE("A word read as a handle and as a value keeps its value", "[video_core
     auto file = Record(recorded);
     WordEnvironment live{{{{2, 0x10}, 9}}, {{7, Color2D}, {9, Color2D}}};
     const char* why = "";
+    REQUIRE(!file.AnswersHoldFor(live, &why));
+    REQUIRE(std::string_view{why} == "constant buffer value");
+}
+
+TEST_CASE("The words of an assembled handle keep their values", "[video_core]") {
+    // Handle (A << 1) | B with A = 1 and B = 0 names handle 2; word D is handle 1 alone, so A's
+    // value is a recorded handle too. Translation reads A and B as values (texture_pass).
+    WordEnvironment recorded{{{{2, 0x10}, 1}, {{2, 0x14}, 0}, {{2, 0x18}, 1}},
+                             {{1, Color2D}, {2, Color2D}}};
+    (void)recorded.ReadTextureType(recorded.ReadCbufHandleWord(2, 0x18));
+    const u32 handle = (recorded.ReadCbufValue(2, 0x10) << 1) | recorded.ReadCbufValue(2, 0x14);
+    (void)recorded.ReadTextureType(handle);
+    auto file = Record(recorded);
+    // Live A = 2: the assembled handle 4 names a 3D texture, while A's value names a 2D one.
+    WordEnvironment live{{{{2, 0x10}, 2}, {{2, 0x14}, 0}, {{2, 0x18}, 1}},
+                         {{1, Color2D}, {2, Color2D}, {4, Color3D}}};
+    const char* why = "";
+    REQUIRE(!file.AnswersHoldFor(live, &why));
+    REQUIRE(std::string_view{why} == "constant buffer value");
+}
+
+TEST_CASE("Markers of the retired layout are dropped", "[video_core]") {
+    // A record made when the words of an assembled handle were marked too: A's value is also
+    // handle 1, which word D names alone, so A's mark would let A change to any 2D handle.
+    WordEnvironment recorded{{{{2, 0x10}, 1}, {{2, 0x14}, 0}, {{2, 0x18}, 1}},
+                             {{1, Color2D}, {2, Color2D}}};
+    (void)recorded.ReadTextureType(recorded.ReadCbufHandleWord(2, 0x18));
+    const u32 handle =
+        (recorded.ReadCbufHandleWord(2, 0x10) << 1) | recorded.ReadCbufHandleWord(2, 0x14);
+    (void)recorded.ReadTextureType(handle);
+    auto bytes = Serialized(recorded);
+    for (const u32 offset : {0x10U, 0x14U}) {
+        const u64 marker = *VideoCommon::CbufHandleWordKey(2, offset);
+        const u64 retired = marker & ~u64{0x40000000};
+        const std::string_view from{reinterpret_cast<const char*>(&marker), sizeof(marker)};
+        const auto at = bytes.find(from);
+        REQUIRE(at != std::string::npos);
+        bytes.replace(at, sizeof(retired), reinterpret_cast<const char*>(&retired),
+                      sizeof(retired));
+    }
+    auto file = Load(std::move(bytes));
+    const char* why = "";
+    WordEnvironment same{{{{2, 0x10}, 1}, {{2, 0x14}, 0}, {{2, 0x18}, 1}},
+                         {{1, Color2D}, {2, Color2D}}};
+    REQUIRE(file.AnswersHoldFor(same, &why));
+    WordEnvironment live{{{{2, 0x10}, 3}, {{2, 0x14}, 0}, {{2, 0x18}, 1}},
+                         {{1, Color2D}, {2, Color2D}, {3, Color2D}, {6, Color3D}}};
     REQUIRE(!file.AnswersHoldFor(live, &why));
     REQUIRE(std::string_view{why} == "constant buffer value");
 }

@@ -187,13 +187,14 @@ private:
     /// Builds the pipeline as a job of shader_jobs with build_in_parallel, else leaves it for the
     /// caller's Build() (see BuildQueue). With `parallel` the stages translate at once on
     /// shader_jobs, each in IR pools of its own; their environments must be safe to read from those
-    /// threads.
+    /// threads. With `without_pipeline_cache` the driver builds it without the Vulkan pipeline
+    /// cache.
     std::unique_ptr<GraphicsPipeline> CreateGraphicsPipeline(
         ShaderPools& pools, const GraphicsPipelineCacheKey& key,
         std::span<Shader::Environment* const> envs, PipelineStatistics* statistics,
         bool build_in_parallel, std::shared_ptr<ShaderPools> emit_pools = nullptr,
         ParallelTranslation* parallel = nullptr,
-        std::array<std::vector<u32>, 5>* spirv_out = nullptr);
+        std::array<std::vector<u32>, 5>* spirv_out = nullptr, bool without_pipeline_cache = false);
 
     /// Released IR pools for a build, or new ones
     [[nodiscard]] std::shared_ptr<ShaderPools> TakeSparePools();
@@ -211,13 +212,11 @@ private:
     /// Builds the pipeline as CreateGraphicsPipeline does. With `emit_pools`, which `pools` must
     /// be, the SPIR-V is emitted by the CPU stage of the pipeline's job, which takes the pools and
     /// the program.
-    ComputePipelineCacheEntry CreateComputePipeline(ShaderPools& pools,
-                                                     const ComputePipelineCacheKey& key,
-                                                     Shader::Environment& env,
-                                                     PipelineStatistics* statistics,
-                                                     bool build_in_parallel,
-                                                     std::shared_ptr<ShaderPools> emit_pools = nullptr,
-                                                     std::vector<u32>* spirv_out = nullptr);
+    ComputePipelineCacheEntry CreateComputePipeline(
+        ShaderPools& pools, const ComputePipelineCacheKey& key, Shader::Environment& env,
+        PipelineStatistics* statistics, bool build_in_parallel,
+        std::shared_ptr<ShaderPools> emit_pools = nullptr, std::vector<u32>* spirv_out = nullptr,
+        bool without_pipeline_cache = false);
 
     /// Where CreateGraphicsPipeline and CreateComputePipeline build; `cpu_bytes` estimates the
     /// IR a deferred emission holds
@@ -469,6 +468,8 @@ private:
 
     std::filesystem::path vulkan_pipeline_cache_filename;
     vk::PipelineCache vulkan_pipeline_cache;
+    /// No cache, for the builds that must not use vulkan_pipeline_cache
+    vk::PipelineCache no_pipeline_cache;
     size_t pipelines_since_flush{};
     std::chrono::steady_clock::time_point last_flush{};
     std::atomic<size_t> last_cache_size{};

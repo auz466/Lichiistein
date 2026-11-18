@@ -1299,6 +1299,9 @@ void FileEnvironment::Deserialize(std::istream& file, std::streampos end) {
             cbuf_handle_words.emplace(*word, u8{1});
             continue;
         }
+        if (IsRetiredCbufHandleWordKey(key)) {
+            continue;
+        }
         cbuf_values.emplace(key, value);
     }
     if (const auto it{cbuf_values.find(READ_PROPERTIES_KEY)}; it != cbuf_values.end()) {

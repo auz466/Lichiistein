@@ -2601,8 +2601,10 @@ void PipelineCache::CanonicalizeNativeKey(
 namespace {
 /// Whether the driver keeps compiled pipelines in a cache of its own (the proprietary NVIDIA and
 /// AMD drivers, and RADV while Mesa's shader cache is on), where the preparation step leaves them.
-bool DriverCachesPipelines(const Device& device) {
-    return device.DriverCachesPipelines();
+/// On MoltenVK, Metal keeps the compiled functions in its own disk cache; that cache holds up to
+/// 1 GiB per file and evicts the oldest beyond it.
+bool PreparesIntoDriverCache(const Device& device) {
+    return device.DriverCachesPipelines() || device.IsMoltenVK();
 }
 } // Anonymous namespace
 
@@ -2700,7 +2702,7 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     }
     // The prepared pipelines are kept by the driver's own cache. Without one they would go to the
     // emulator's pipeline cache file, which is loaded whole at boot: only on request there.
-    if (!DriverCachesPipelines(device) && !(enabled && enabled[0] == '1')) {
+    if (!PreparesIntoDriverCache(device) && !(enabled && enabled[0] == '1')) {
         LOG_INFO(Render_Vulkan, "Precompiled pipelines skipped: the driver keeps no pipeline cache "
                                 "of its own (EDEN_NX2_PRECOMPILED=1 prepares them anyway)");
         return;
@@ -3064,13 +3066,18 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
                      return {};
                  }
                  Common::UniqueFunction<bool> build;
+                 // MoltenVK holds one lock across every build with a pipeline cache
+                 // (KhronosGroup/MoltenVK#2863), and the cache would keep every prepared pipeline
+                 // in the file loaded at boot. Metal's own cache keeps them.
+                 const bool without_cache = device.IsMoltenVK();
                  try {
                      auto envs = prep.ReadEnvs(record.envs);
                      ShaderPools pools;
                      if (record.compute) {
                          std::array<std::vector<u32>, Maxwell::MaxShaderStage> spirv;
                          auto entry{CreateComputePipeline(pools, record.compute_key, envs.front(),
-                                                          nullptr, false, nullptr, &spirv[0])};
+                                                          nullptr, false, nullptr, &spirv[0],
+                                                          without_cache)};
                          if (entry.pipeline) {
                              build = [index, &prep, spirv = std::move(spirv),
                                       pipeline = std::move(entry.pipeline)] {
@@ -3090,9 +3097,9 @@ PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
                              env_ptrs.push_back(&env);
                          }
                          std::array<std::vector<u32>, Maxwell::MaxShaderStage> spirv;
-                         auto pipeline{CreateGraphicsPipeline(pools, record.graphics_key,
-                                                              MakeSpan(env_ptrs), nullptr, false,
-                                                              nullptr, nullptr, &spirv)};
+                         auto pipeline{CreateGraphicsPipeline(
+                             pools, record.graphics_key, MakeSpan(env_ptrs), nullptr, false,
+                             nullptr, nullptr, &spirv, without_cache)};
                          if (pipeline) {
                              build = [index, &prep, spirv = std::move(spirv),
                                       pipeline = std::move(pipeline)] {
@@ -4525,9 +4532,9 @@ bool PipelineCache::TranslateGraphicsStages(ShaderPools& pools, const GraphicsPi
 std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     ShaderPools& pools, const GraphicsPipelineCacheKey& key,
     std::span<Shader::Environment* const> envs, PipelineStatistics* statistics,
-    bool build_in_parallel, std::shared_ptr<ShaderPools> emit_pools,
-    ParallelTranslation* parallel,
-    std::array<std::vector<u32>, Maxwell::MaxShaderStage>* spirv_out) try {
+    bool build_in_parallel, std::shared_ptr<ShaderPools> emit_pools, ParallelTranslation* parallel,
+    std::array<std::vector<u32>, Maxwell::MaxShaderStage>* spirv_out,
+    bool without_pipeline_cache) try {
     LOG_DEBUG(Render_Vulkan, "{:#016x}", key.Hash());
     // Declared before the programs, whose IR they hold
     std::vector<std::shared_ptr<ShaderPools>> stage_pools;
@@ -4619,7 +4626,8 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         }
     }
     auto pipeline = std::make_unique<GraphicsPipeline>(
-        scheduler, buffer_cache, texture_cache, vulkan_pipeline_cache, pipeline_binaries.get(),
+        scheduler, buffer_cache, texture_cache,
+        without_pipeline_cache ? no_pipeline_cache : vulkan_pipeline_cache, pipeline_binaries.get(),
         &shader_notify, device, descriptor_pool, guest_descriptor_queue, descriptor_buffer_ring,
         BuildQueue(build_in_parallel, defer_emission ? deferred_ir_bytes : 0), statistics,
         render_pass_cache, key, std::move(stage_spirv), infos, std::move(emit_stages),
@@ -5053,8 +5061,10 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(const ComputePipe
 
 ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
     ShaderPools& pools, const ComputePipelineCacheKey& key, Shader::Environment& env,
-    PipelineStatistics* statistics, bool build_in_parallel,
-    std::shared_ptr<ShaderPools> emit_pools, std::vector<u32>* spirv_out) try {
+    PipelineStatistics* statistics, bool build_in_parallel, std::shared_ptr<ShaderPools> emit_pools,
+    std::vector<u32>* spirv_out, bool without_pipeline_cache) try {
+    vk::PipelineCache& pipeline_cache =
+        without_pipeline_cache ? no_pipeline_cache : vulkan_pipeline_cache;
     SCOPE_EXIT {
         if (emit_pools) {
             ReturnPools(std::move(emit_pools));
@@ -5112,11 +5122,10 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
             return module;
         };
         pipeline = std::make_unique<ComputePipeline>(
-            device, scheduler, vulkan_pipeline_cache, pipeline_binaries.get(), hash,
-            descriptor_pool, guest_descriptor_queue, descriptor_buffer_ring,
-            BuildQueue(build_in_parallel, ir_bytes), statistics,
-            &shader_notify, info, vk::ShaderModule{}, key.unique_hash, std::vector<u8>{},
-            std::move(emit));
+            device, scheduler, pipeline_cache, pipeline_binaries.get(), hash, descriptor_pool,
+            guest_descriptor_queue, descriptor_buffer_ring, BuildQueue(build_in_parallel, ir_bytes),
+            statistics, &shader_notify, info, vk::ShaderModule{}, key.unique_hash,
+            std::vector<u8>{}, std::move(emit));
     } else {
         std::vector<u8> kept_spirv;
         vk::ShaderModule module{
@@ -5130,10 +5139,10 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
             pools.inst.Free();
         }
         pipeline = std::make_unique<ComputePipeline>(
-            device, scheduler, vulkan_pipeline_cache, pipeline_binaries.get(), hash,
-            descriptor_pool, guest_descriptor_queue, descriptor_buffer_ring,
-            BuildQueue(build_in_parallel), statistics, &shader_notify, info, std::move(module),
-            key.unique_hash, std::move(kept_spirv));
+            device, scheduler, pipeline_cache, pipeline_binaries.get(), hash, descriptor_pool,
+            guest_descriptor_queue, descriptor_buffer_ring, BuildQueue(build_in_parallel),
+            statistics, &shader_notify, info, std::move(module), key.unique_hash,
+            std::move(kept_spirv));
     }
     return {.pipeline = std::move(pipeline),
             .null_pointer_slots = env.IsNativeProgram() ? env.NullStoragePointerSlots()

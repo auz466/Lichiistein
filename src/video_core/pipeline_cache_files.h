@@ -44,11 +44,14 @@ inline constexpr std::array<char, 8> VulkanDriverPipelineCacheMagic{'y', 'u', 'z
 /// which of its words' values need not be the same. They are values at a bank no constant buffer
 /// has (as the read properties at offset 0 and the null texture marker at 1), which older builds
 /// load as values translation never reads; records without them hold no such word.
-inline constexpr u32 CbufHandleWordMark = 0x80000000;
+inline constexpr u32 CbufHandleWordMark = 0xc0000000;
+/// The first markers (bit 31 alone) also named the words of handles assembled from several or
+/// shifted words. Loading drops them, so such a record needs every value the same.
+inline constexpr u32 CbufHandleWordMarkRetired = 0x80000000;
 
 /// The marker key of the word at (`index`, `offset`), or nothing for one out of its range.
 [[nodiscard]] constexpr std::optional<u64> CbufHandleWordKey(u32 index, u32 offset) {
-    if (index >= 0x8000 || offset >= 0x10000) {
+    if (index >= 0x4000 || offset >= 0x10000) {
         return std::nullopt;
     }
     return (u64{~0U} << 32) | CbufHandleWordMark | (index << 16) | offset;
@@ -56,10 +59,15 @@ inline constexpr u32 CbufHandleWordMark = 0x80000000;
 
 /// The key of the word a marker key names, or nothing for another key.
 [[nodiscard]] constexpr std::optional<u64> CbufHandleWordFromKey(u64 key) {
-    if ((key >> 32) != ~0U || (key & CbufHandleWordMark) == 0) {
+    if ((key >> 32) != ~0U || (key & 0xc0000000) != CbufHandleWordMark) {
         return std::nullopt;
     }
-    return (u64{(key >> 16) & 0x7fff} << 32) | (key & 0xffff);
+    return (u64{(key >> 16) & 0x3fff} << 32) | (key & 0xffff);
+}
+
+/// Whether `key` is a marker of the retired layout.
+[[nodiscard]] constexpr bool IsRetiredCbufHandleWordKey(u64 key) {
+    return (key >> 32) == ~0U && (key & 0xc0000000) == CbufHandleWordMarkRetired;
 }
 
 /// Whether `versions` are all below `version` and strictly decreasing. An empty list is valid.

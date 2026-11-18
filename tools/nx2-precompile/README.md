@@ -76,7 +76,13 @@ its pipeline is dropped once, and its keys keep every attribute type from then o
 
 The preparation step needs a driver that keeps its own pipeline cache (NVIDIA's and AMD's
 proprietary drivers, and RADV while Mesa's shader cache is on, as `Device::DriverCachesPipelines`
-says); elsewhere it runs only with `EDEN_NX2_PRECOMPILED=1`.
+says), or MoltenVK, where Metal keeps the compiled functions; elsewhere it runs only with
+`EDEN_NX2_PRECOMPILED=1`. On MoltenVK the preparation builds without the Vulkan pipeline cache,
+so the emulator's cache file does not grow by the prepared pipelines.
+
+The state model learns from pipeline keys with dynamic vertex input only. On a GPU without it
+(MoltenVK, for one) it predicts nothing, and the file holds the recorded pipelines and compute
+programs only.
 Records carry the driver of the machine that recorded them; they are prepared with this machine's,
 as draws key them, so a driver update only means preparing again.
 
@@ -86,6 +92,10 @@ Unlimited** (NVIDIA Control Panel, Manage 3D settings). With "Driver default" th
 ~33,000 and silently dropped the rest, so a new area compiled almost everything again. Unlimited
 held all of them (about 2.6 GB on an RTX 3080). The preparation step cannot detect this; a session's
 log shows it as prepared pipelines that still take hundreds of milliseconds to build.
+
+Metal's cache on macOS keeps at most 1 GiB per file (`libraries.data`, `functions.data`), and
+`MTL_SHADER_CACHE_SIZE` cannot raise that: values above 1 GiB are clamped to it (reported on an M4
+Pro with macOS 27). A file larger than that does not stay prepared.
 
 ## Commands
 

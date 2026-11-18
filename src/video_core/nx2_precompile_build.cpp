@@ -589,6 +589,8 @@ public:
                 for (const auto* const blob : envs) {
                     write(blob->data(), blob->size());
                 }
+                // The destructor would drop a failed final flush; with the mask this throws.
+                file.close();
             }
             std::filesystem::rename(partial, path);
         } catch (...) {
