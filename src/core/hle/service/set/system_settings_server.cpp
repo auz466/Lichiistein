@@ -24,6 +24,7 @@
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/set/settings_server.h"
 #include "core/hle/service/set/system_settings_server.h"
+#include "core/hle/service/system_data_view.h"
 
 namespace Service::Set {
 
@@ -61,27 +62,31 @@ void SyncGlobalRegionFromCode(SystemRegionCode region_code) {
 } // Anonymous namespace
 
 Result GetFirmwareVersionImpl(FirmwareVersionFormat& out_firmware, Core::System& system,
-                              GetFirmwareVersionType type) {
-    constexpr u64 FirmwareVersionSystemDataId = 0x0100000000000809;
-    auto& fsc = system.GetFileSystemController();
-
-    // Attempt to load version data from disk
-    const FileSys::RegisteredCache* bis_system{};
-    std::unique_ptr<FileSys::NCA> nca{};
-    FileSys::VirtualDir romfs{};
-
-    bis_system = fsc.GetSystemNANDContents();
-    if (bis_system) {
-        nca = bis_system->GetEntry(FirmwareVersionSystemDataId, FileSys::ContentRecordType::Data);
-    }
-    if (nca) {
-        if (auto nca_romfs = nca->GetRomFS(); nca_romfs) {
-            romfs = FileSys::ExtractRomFS(nca_romfs);
+                              GetFirmwareVersionType type,
+                              const SystemDataView* isolated_system_data) {
+    std::shared_ptr<const FileSys::VfsFile> ver_file;
+    if (isolated_system_data) {
+        ver_file = isolated_system_data->OpenFile(SystemDataAsset::FirmwareVersion, "file");
+        R_UNLESS(ver_file, FileSys::ResultTargetNotFound);
+    } else {
+        constexpr u64 FirmwareVersionSystemDataId = 0x0100000000000809;
+        FileSys::VirtualDir romfs;
+        if (const auto* nand = system.GetFileSystemController().GetSystemNANDContents()) {
+            const auto nca =
+                nand->GetEntry(FirmwareVersionSystemDataId, FileSys::ContentRecordType::Data);
+            if (nca) {
+                if (auto raw_romfs = nca->GetRomFS()) {
+                    romfs = FileSys::ExtractRomFS(std::move(raw_romfs));
+                }
+            }
         }
-    }
-    if (!romfs) {
-        romfs = FileSys::ExtractRomFS(
-            FileSys::SystemArchive::SynthesizeSystemArchive(FirmwareVersionSystemDataId));
+        if (!romfs) {
+            romfs = FileSys::ExtractRomFS(
+                FileSys::SystemArchive::SynthesizeSystemArchive(FirmwareVersionSystemDataId));
+        }
+        if (romfs) {
+            ver_file = romfs->GetFile("file");
+        }
     }
 
     const auto early_exit_failure = [](std::string_view desc, Result code) {
@@ -90,19 +95,19 @@ Result GetFirmwareVersionImpl(FirmwareVersionFormat& out_firmware, Core::System&
         return code;
     };
 
-    const auto ver_file = romfs->GetFile("file");
     if (ver_file == nullptr) {
         return early_exit_failure("The system version archive didn't contain the file 'file'.",
                                   FileSys::ResultInvalidArgument);
     }
 
-    auto data = ver_file->ReadAllBytes();
-    if (data.size() != sizeof(FirmwareVersionFormat)) {
+    FirmwareVersionFormat firmware{};
+    if (ver_file->GetSize() != sizeof(firmware) ||
+        ver_file->ReadObject(&firmware) != sizeof(firmware)) {
         return early_exit_failure("The system version file 'file' was not the correct size.",
                                   FileSys::ResultOutOfRange);
     }
 
-    std::memcpy(&out_firmware, data.data(), sizeof(FirmwareVersionFormat));
+    out_firmware = firmware;
 
     // If the command is GetFirmwareVersion (as opposed to GetFirmwareVersion2), hardware will
     // zero out the REVISION_MINOR field.
@@ -113,8 +118,10 @@ Result GetFirmwareVersionImpl(FirmwareVersionFormat& out_firmware, Core::System&
     return ResultSuccess;
 }
 
-ISystemSettingsServer::ISystemSettingsServer(Core::System& system_)
-    : ServiceFramework{system_, "set:sys"}, m_system{system} {
+ISystemSettingsServer::ISystemSettingsServer(
+    Core::System& system_, std::shared_ptr<const SystemDataView> isolated_system_data)
+    : ServiceFramework{system_, "set:sys"}, m_system{system},
+      m_isolated_system_data{std::move(isolated_system_data)} {
     // clang-format off
     static const FunctionInfo functions[] = {
         {0, C<&ISystemSettingsServer::SetLanguageCode>, "SetLanguageCode"},
@@ -488,14 +495,16 @@ Result ISystemSettingsServer::GetFirmwareVersion(
     OutLargeData<FirmwareVersionFormat, BufferAttr_HipcPointer> out_firmware_data) {
     LOG_DEBUG(Service_SET, "called");
 
-    R_RETURN(GetFirmwareVersionImpl(*out_firmware_data, system, GetFirmwareVersionType::Version1));
+    R_RETURN(GetFirmwareVersionImpl(*out_firmware_data, system, GetFirmwareVersionType::Version1,
+                                    m_isolated_system_data.get()));
 }
 
 Result ISystemSettingsServer::GetFirmwareVersion2(
     OutLargeData<FirmwareVersionFormat, BufferAttr_HipcPointer> out_firmware_data) {
     LOG_DEBUG(Service_SET, "called");
 
-    R_RETURN(GetFirmwareVersionImpl(*out_firmware_data, system, GetFirmwareVersionType::Version2));
+    R_RETURN(GetFirmwareVersionImpl(*out_firmware_data, system, GetFirmwareVersionType::Version2,
+                                    m_isolated_system_data.get()));
 }
 
 Result ISystemSettingsServer::GetLockScreenFlag(Out<bool> out_lock_screen_flag) {

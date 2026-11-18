@@ -62,6 +62,7 @@
 #include "core/hle/service/filesystem/fsp/fs_read_trace.h"
 #include "core/hle/service/glue/glue_manager.h"
 #include "core/hle/service/glue/time/static.h"
+#include "core/hle/service/glue/time/time_zone_binary.h"
 #include "core/hle/service/psc/time/static.h"
 #include "core/hle/service/psc/time/steady_clock.h"
 #include "core/hle/service/psc/time/system_clock.h"
@@ -207,6 +208,12 @@ std::optional<u64> FindSwitch2Program(const FileSys::VirtualFile& file, u64 prog
                 nsp.GetNCA(nsp.GetProgramTitleID(), FileSys::ContentRecordType::Program);
             exefs = program != nullptr ? program->GetExeFS() : nullptr;
         }
+        const auto npdm = exefs != nullptr ? exefs->GetFile("main.npdm") : nullptr;
+        return Switch2ProgramId(metadata, npdm);
+    }
+    if (type == Loader::FileType::NCA) {
+        const FileSys::NCA nca{file};
+        const auto exefs = nca.GetStatus() == Loader::ResultStatus::Success ? nca.GetExeFS() : nullptr;
         const auto npdm = exefs != nullptr ? exefs->GetFile("main.npdm") : nullptr;
         return Switch2ProgramId(metadata, npdm);
     }
@@ -429,7 +436,19 @@ struct System::Impl {
         return SystemResultStatus::Success;
     }
 
-    SystemResultStatus SetupForApplicationProcess(System& system, Frontend::EmuWindow& emu_window) {
+    SystemResultStatus SetupForApplicationProcess(
+        System& system, Frontend::EmuWindow& emu_window,
+        std::shared_ptr<const Service::SystemDataView> isolated_system_data = {}) {
+        std::shared_ptr<Service::Glue::Time::TimeZoneBinary> isolated_time_zone;
+        if (isolated_system_data) {
+            isolated_time_zone = std::make_shared<Service::Glue::Time::TimeZoneBinary>(system);
+            const auto result = isolated_time_zone->Mount(isolated_system_data);
+            if (result.IsFailure()) {
+                LOG_ERROR(Core, "Cannot mount isolated time-zone data: {:#x}", result.raw);
+                return SystemResultStatus::ErrorSystemFiles;
+            }
+        }
+
         host1x_core.emplace(system);
         VideoCore::CreateGPU(gpu_core, emu_window, system);
         if (!gpu_core)
@@ -438,7 +457,8 @@ struct System::Impl {
         audio_core.emplace(system);
 
         service_manager = std::make_shared<Service::SM::ServiceManager>(kernel);
-        services.emplace(service_manager, system, stop_event.get_token());
+        services.emplace(service_manager, system, stop_event.get_token(),
+                         std::move(isolated_system_data), std::move(isolated_time_zone));
 
         is_powered_on = true;
         exit_locked = false;
@@ -745,6 +765,7 @@ struct System::Impl {
     Network::NetworkInstance network_instance;
     Core::SpeedLimiter speed_limiter;
     ExecuteProgramCallback execute_program_callback;
+    LaunchInNewSessionCallback launch_in_new_session_callback;
     ExitCallback exit_callback;
     ApplicationChangedCallback application_changed_callback;
 
@@ -1219,6 +1240,18 @@ void System::ExecuteProgram(std::size_t program_index) {
     } else {
         LOG_CRITICAL(Core, "execute_program_callback must be initialized by the frontend");
     }
+}
+
+void System::RegisterLaunchInNewSessionCallback(LaunchInNewSessionCallback&& callback) {
+    impl->launch_in_new_session_callback = std::move(callback);
+}
+
+bool System::LaunchInNewSession(u64 program_id) {
+    if (!impl->launch_in_new_session_callback) {
+        return false;
+    }
+    impl->launch_in_new_session_callback(program_id);
+    return true;
 }
 
 const std::string& System::GetCurrentApplicationFilePath() const {

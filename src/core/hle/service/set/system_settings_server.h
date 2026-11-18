@@ -6,6 +6,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -26,14 +27,20 @@ namespace Core {
 class System;
 }
 
+namespace Service {
+class SystemDataView;
+}
+
 namespace Service::Set {
 
 Result GetFirmwareVersionImpl(FirmwareVersionFormat& out_firmware, Core::System& system,
-                              GetFirmwareVersionType type);
+                              GetFirmwareVersionType type,
+                              const SystemDataView* isolated_system_data = nullptr);
 
 class ISystemSettingsServer final : public ServiceFramework<ISystemSettingsServer> {
 public:
-    explicit ISystemSettingsServer(Core::System& system_);
+    explicit ISystemSettingsServer(Core::System& system_,
+                                   std::shared_ptr<const SystemDataView> isolated_system_data = {});
     ~ISystemSettingsServer() override;
 
     Result GetSettingsItemValueImpl(std::span<u8> out_value, u64& out_size,
@@ -179,6 +186,7 @@ private:
     void SetSaveNeeded();
 
     Core::System& m_system;
+    const std::shared_ptr<const SystemDataView> m_isolated_system_data;
     SystemSettings m_system_settings{};
     PrivateSettings m_private_settings{};
     DeviceSettings m_device_settings{};

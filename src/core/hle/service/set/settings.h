@@ -5,12 +5,17 @@
 
 #pragma once
 
+#include <memory>
+
 namespace Core {
 class System;
 }
 
-namespace Service::Set {
+namespace Service {
+class SystemDataView;
 
-void LoopProcess(Core::System& system);
+namespace Set {
+void LoopProcess(Core::System& system, std::shared_ptr<const SystemDataView> isolated_system_data);
 
-} // namespace Service::Set
+} // namespace Set
+} // namespace Service
