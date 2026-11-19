@@ -25,8 +25,18 @@ enum class SystemDataAsset {
 class SystemDataView final {
 public:
     using Records = std::map<SystemDataAsset, std::shared_ptr<const FileSys::VfsDirectory>>;
+    using NativeDataArchives = std::map<u64, std::shared_ptr<const FileSys::VfsFile>>;
 
-    explicit SystemDataView(Records immutable_romfs) : records{std::move(immutable_romfs)} {}
+    explicit SystemDataView(Records immutable_romfs, NativeDataArchives immutable_archives = {})
+        : records{std::move(immutable_romfs)}, native_archives{std::move(immutable_archives)} {}
+
+    [[nodiscard]] std::shared_ptr<const FileSys::VfsFile> OpenNativeDataArchive(u64 title_id) const {
+        if ((title_id >> 48) != 0x0400) {
+            return nullptr;
+        }
+        const auto archive = native_archives.find(title_id);
+        return archive == native_archives.end() ? nullptr : archive->second;
+    }
 
     [[nodiscard]] std::shared_ptr<const FileSys::VfsFile> OpenFile(
         SystemDataAsset asset, std::string_view path) const {
@@ -53,6 +63,7 @@ public:
 
 private:
     const Records records;
+    const NativeDataArchives native_archives;
 };
 
 } // namespace Service

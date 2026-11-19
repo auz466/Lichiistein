@@ -14,15 +14,22 @@
 
 namespace Service::Set {
 
+SettingsServers CreateSettingsServers(Core::System& system,
+                                     std::shared_ptr<const SystemDataView> isolated_system_data) {
+    const bool scratch_profile = isolated_system_data != nullptr;
+    auto set_sys = std::make_shared<ISystemSettingsServer>(system, std::move(isolated_system_data));
+    auto set = std::make_shared<ISettingsServer>(system, scratch_profile ? set_sys : nullptr);
+    return {std::move(set), std::move(set_sys)};
+}
+
 void LoopProcess(Core::System& system, std::shared_ptr<const SystemDataView> isolated_system_data) {
     auto server_manager = std::make_unique<ServerManager>(system);
 
-    server_manager->RegisterNamedService("set", std::make_shared<ISettingsServer>(system), 60);
+    auto settings = CreateSettingsServers(system, std::move(isolated_system_data));
+    server_manager->RegisterNamedService("set", std::move(settings.user), 60);
     server_manager->RegisterNamedService("set:cal", std::make_shared<IFactorySettingsServer>(system), 60);
     server_manager->RegisterNamedService("set:fd", std::make_shared<IFirmwareDebugSettingsServer>(system), 60);
-    server_manager->RegisterNamedService(
-        "set:sys", std::make_shared<ISystemSettingsServer>(system, std::move(isolated_system_data)),
-        60);
+    server_manager->RegisterNamedService("set:sys", std::move(settings.system), 60);
     ServerManager::RunServer(std::move(server_manager));
 }
 

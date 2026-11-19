@@ -15,6 +15,16 @@ namespace Service {
 class SystemDataView;
 
 namespace Set {
+class ISettingsServer;
+class ISystemSettingsServer;
+
+struct SettingsServers {
+    std::shared_ptr<ISettingsServer> user;
+    std::shared_ptr<ISystemSettingsServer> system;
+};
+
+SettingsServers CreateSettingsServers(Core::System& system,
+                                     std::shared_ptr<const SystemDataView> isolated_system_data);
 void LoopProcess(Core::System& system, std::shared_ptr<const SystemDataView> isolated_system_data);
 
 } // namespace Set

@@ -354,7 +354,16 @@ ISystemSettingsServer::ISystemSettingsServer(
 
     RegisterHandlers(functions);
 
-    SetupSettings();
+    if (m_isolated_system_data) {
+        InitializeDefaultSystemSettings(m_system_settings);
+        m_system_settings.language_code = GetLanguageCodeFromIndex(
+            static_cast<std::size_t>(::Settings::values.language_index.GetValue()));
+        m_private_settings = DefaultPrivateSettings();
+        m_device_settings = DefaultDeviceSettings();
+        m_appln_settings = DefaultApplnSettings();
+    } else {
+        SetupSettings();
+    }
 
     m_system_settings.region_code =
         static_cast<SystemRegionCode>(::Settings::values.region_index.GetValue());
@@ -485,10 +494,21 @@ bool ISystemSettingsServer::StoreSettingsFile(std::filesystem::path& path, auto&
 Result ISystemSettingsServer::SetLanguageCode(LanguageCode language_code) {
     LOG_INFO(Service_SET, "called, language_code={}", language_code);
 
+    if (m_isolated_system_data) {
+        std::scoped_lock lock{m_scratch_profile_mutex};
+        m_system_settings.language_code = language_code;
+        R_SUCCEED();
+    }
+
     m_system_settings.language_code = language_code;
     SyncGlobalLanguageFromCode(language_code);
     SetSaveNeeded();
     R_SUCCEED();
+}
+
+LanguageCode ISystemSettingsServer::GetScratchLanguageCode() const {
+    std::scoped_lock lock{m_scratch_profile_mutex};
+    return m_system_settings.language_code;
 }
 
 Result ISystemSettingsServer::GetFirmwareVersion(
@@ -920,10 +940,21 @@ Result ISystemSettingsServer::SetDeviceTimeZoneLocationName(
 Result ISystemSettingsServer::SetRegionCode(SystemRegionCode region_code) {
     LOG_INFO(Service_SET, "called, region_code={}", region_code);
 
+    if (m_isolated_system_data) {
+        std::scoped_lock lock{m_scratch_profile_mutex};
+        m_system_settings.region_code = region_code;
+        R_SUCCEED();
+    }
+
     m_system_settings.region_code = region_code;
     SyncGlobalRegionFromCode(region_code);
     SetSaveNeeded();
     R_SUCCEED();
+}
+
+SystemRegionCode ISystemSettingsServer::GetScratchRegionCode() const {
+    std::scoped_lock lock{m_scratch_profile_mutex};
+    return m_system_settings.region_code;
 }
 
 Result ISystemSettingsServer::GetNetworkSystemClockContext(
@@ -1185,6 +1216,12 @@ Result ISystemSettingsServer::GetDeviceNickName(
     OutLargeData<std::array<u8, 0x80>, BufferAttr_HipcMapAlias> out_device_name) {
     LOG_DEBUG(Service_SET, "called");
 
+    if (m_isolated_system_data) {
+        std::scoped_lock lock{m_scratch_profile_mutex};
+        *out_device_name = m_system_settings.device_nick_name;
+        R_SUCCEED();
+    }
+
     *out_device_name = {};
     const auto device_name_buffer = ::Settings::values.device_name.GetValue().c_str();
     memcpy(out_device_name->data(), device_name_buffer,
@@ -1198,6 +1235,13 @@ Result ISystemSettingsServer::SetDeviceNickName(
     const std::string device_name = Common::StringFromBuffer(*device_name_buffer);
 
     LOG_INFO(Service_SET, "called, device_name={}", device_name);
+
+    if (m_isolated_system_data) {
+        std::scoped_lock lock{m_scratch_profile_mutex};
+        m_system_settings.device_nick_name = {};
+        std::copy(device_name.begin(), device_name.end(), m_system_settings.device_nick_name.begin());
+        R_SUCCEED();
+    }
 
     ::Settings::values.device_name = device_name;
     R_SUCCEED();
@@ -1494,7 +1538,11 @@ Result ISystemSettingsServer::GetDefaultAccountUserSettings(Out<AccountUserSetti
 
 void ISystemSettingsServer::SetupSettings() {
     auto system_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::NANDDir) / "system/save/8000000000000050";
-    if (!LoadSettingsFile(system_dir, []() { return DefaultSystemSettings(); })) {
+    if (!LoadSettingsFile(system_dir, [] {
+            SystemSettings settings{};
+            InitializeDefaultSystemSettings(settings);
+            return settings;
+        })) {
         ASSERT(false);
     }
 
@@ -1537,6 +1585,10 @@ void ISystemSettingsServer::StoreSettings() {
 }
 
 void ISystemSettingsServer::SetSaveNeeded() {
+    if (m_isolated_system_data) {
+        return;
+    }
+
     std::scoped_lock l{m_save_needed_mutex};
     StoreSettings();
 }

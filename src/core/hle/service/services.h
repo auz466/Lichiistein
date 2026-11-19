@@ -24,7 +24,8 @@ public:
     explicit Services(std::shared_ptr<SM::ServiceManager>& sm, Core::System& system,
                       std::stop_token token,
                       std::shared_ptr<const SystemDataView> isolated_system_data,
-                      std::shared_ptr<Glue::Time::TimeZoneBinary> isolated_time_zone);
+                      std::shared_ptr<Glue::Time::TimeZoneBinary> isolated_time_zone,
+                      u64 isolated_process_id);
     /// Joins the audio and vi threads. At shutdown this runs after ServiceManager::Close and
     /// CloseServices, so they leave their wait or server at once, and before the service manager
     /// they use is destroyed.

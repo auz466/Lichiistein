@@ -179,6 +179,10 @@ public:
     Result GetDefaultAccountUserSettings(Out<AccountUserSettings> out_settings);
 
 private:
+    friend class ISettingsServer;
+
+    LanguageCode GetScratchLanguageCode() const;
+    SystemRegionCode GetScratchRegionCode() const;
     bool LoadSettingsFile(std::filesystem::path& path, auto&& default_func);
     bool StoreSettingsFile(std::filesystem::path& path, auto& settings);
     void SetupSettings();
@@ -191,6 +195,7 @@ private:
     PrivateSettings m_private_settings{};
     DeviceSettings m_device_settings{};
     ApplnSettings m_appln_settings{};
+    mutable std::mutex m_scratch_profile_mutex;
     std::mutex m_save_needed_mutex;
     bool m_save_needed{false};
 };
